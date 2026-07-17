@@ -63,10 +63,58 @@ struct CardsOptions: CommanderParsable {
 
     @Flag(name: .long("brief"), help: "Compact table layout instead of the card grid")
     var brief: Bool = false
+
+    // Fork: interactive full-screen watch mode (vim-style single keys: w/m/h/r/?/q).
+    @Flag(name: .long("watch"), help: "Interactive full-screen watch mode (q quit · r refresh · w week · m 30d · h heatmap)")
+    var watch: Bool = false
+
+    // Fork: refresh interval for --watch (seconds; minimum 60).
+    @Option(name: .long("interval"), help: "Watch refresh interval in seconds (default 60, minimum 60)")
+    var interval: Int?
+}
+
+// Fork: runCards is split into makeCardsRunPlan / fetchCardsOnce / renderCardsOutput so
+// the interactive --watch loop can re-fetch and re-render without re-parsing argv. Plain
+// `cards` behavior is unchanged: it just chains the three stages and exits once.
+//
+// @unchecked Sendable: every stored field is a value type or an already-Sendable fetcher
+// (UsageFetcher/ClaudeUsageFetcher/BrowserDetection). The plan is built once and only read
+// during the single-flight refresh, so passing it into the refresh Task is race-free.
+struct CardsRunPlan: @unchecked Sendable {
+    let output: CLIOutputPreferences
+    let providerList: [UsageProvider]
+    let includeStatus: Bool
+    let claudeConfig: ProviderConfig?
+    let parsedSourceMode: ProviderSourceMode?
+    let tokenSelection: TokenAccountCLISelection
+    let tokenContext: TokenAccountCLIContext
+    let command: UsageCommandContext
+    let useColor: Bool
+    let brief: Bool
+    let resetStyle: ResetTimeDisplayStyle
+    let weeklyWorkDays: Int?
 }
 
 extension CodexBarCLI {
     static func runCards(_ values: ParsedValues) async {
+        let plan = Self.makeCardsRunPlan(values)
+        let result = await Self.fetchCardsOnce(plan: plan)
+        let rendered = Self.renderCardsOutput(
+            cards: result.cards,
+            failures: result.failures,
+            plan: plan,
+            terminalWidth: CLICardsRenderer.terminalColumnCount())
+        if !rendered.isEmpty {
+            print(rendered)
+        }
+        Self.exit(
+            code: result.exitCode,
+            output: plan.output,
+            kind: result.exitCode == .success ? .runtime : .provider)
+    }
+
+    // Fork: argv parsing + context construction (validation errors exit before any TUI starts).
+    static func makeCardsRunPlan(_ values: ParsedValues) -> CardsRunPlan {
         let output = CLIOutputPreferences.from(values: values)
         let config = Self.loadConfig(output: output)
         let provider = Self.decodeProvider(from: values, config: config)
@@ -148,9 +196,6 @@ extension CodexBarCLI {
             Self.exit(code: .failure, message: "Error: \(error.localizedDescription)", output: output, kind: .config)
         }
 
-        var cards: [CLICardModel] = []
-        var failures: [CLICardFailure] = []
-        var exitCode: ExitCode = .success
         let command = UsageCommandContext(
             format: .text,
             includeCredits: includeCredits,
@@ -170,29 +215,52 @@ extension CodexBarCLI {
             browserDetection: browserDetection,
             cardsLayout: true)
 
-        for provider in providerList {
-            let status = includeStatus ? await Self.fetchStatus(for: provider) : nil
+        return CardsRunPlan(
+            output: output,
+            providerList: providerList,
+            includeStatus: includeStatus,
+            claudeConfig: claudeConfig,
+            parsedSourceMode: parsedSourceMode,
+            tokenSelection: tokenSelection,
+            tokenContext: tokenContext,
+            command: command,
+            useColor: useColor,
+            brief: brief,
+            resetStyle: resetStyle,
+            weeklyWorkDays: weeklyWorkDays)
+    }
+
+    // Fork: one full provider-fetch pass. Called once by `cards`, repeatedly by `--watch`.
+    static func fetchCardsOnce(
+        plan: CardsRunPlan) async -> (cards: [CLICardModel], failures: [CLICardFailure], exitCode: ExitCode)
+    {
+        var cards: [CLICardModel] = []
+        var failures: [CLICardFailure] = []
+        var exitCode: ExitCode = .success
+
+        for provider in plan.providerList {
+            let status = plan.includeStatus ? await Self.fetchStatus(for: provider) : nil
             let claudeSwapEligible = CLIClaudeSwapCards.isEligible(
                 provider: provider,
-                integrationEnabled: claudeConfig?.claudeSwapEnabled == true,
-                hasExplicitAccountSelection: tokenSelection.usesOverride,
-                sourceModeOverride: parsedSourceMode)
+                integrationEnabled: plan.claudeConfig?.claudeSwapEnabled == true,
+                hasExplicitAccountSelection: plan.tokenSelection.usesOverride,
+                sourceModeOverride: plan.parsedSourceMode)
             let result = await CLIClaudeSwapCards.fetch(
                 eligible: claudeSwapEligible,
-                executablePath: CLIClaudeSwapCards.executablePath(from: claudeConfig),
+                executablePath: CLIClaudeSwapCards.executablePath(from: plan.claudeConfig),
                 renderOptions: CLIClaudeSwapCardsRenderOptions(
                     status: status,
-                    useColor: useColor,
-                    resetStyle: resetStyle,
-                    weeklyWorkDays: weeklyWorkDays,
+                    useColor: plan.useColor,
+                    resetStyle: plan.resetStyle,
+                    weeklyWorkDays: plan.weeklyWorkDays,
                     now: Date()),
                 ambientFetch: {
                     await ProviderInteractionContext.$current.withValue(.background) {
                         await Self.fetchUsageOutputs(
                             provider: provider,
                             status: status,
-                            tokenContext: tokenContext,
-                            command: command)
+                            tokenContext: plan.tokenContext,
+                            command: plan.command)
                     }
                 })
             if result.exitCode != .success {
@@ -202,28 +270,32 @@ extension CodexBarCLI {
             failures.append(contentsOf: result.cardFailures)
         }
 
-        let rendered: String
-        let enhanced = CLITerminalCapabilities.supportsEnhancedCards(useColor: useColor)
-        if brief {
+        return (cards, failures, exitCode)
+    }
+
+    // Fork: render one frame from fetched cards. `terminalWidth` is a parameter so watch
+    // can re-render at the current width after a SIGWINCH without re-fetching.
+    static func renderCardsOutput(
+        cards: [CLICardModel],
+        failures: [CLICardFailure],
+        plan: CardsRunPlan,
+        terminalWidth: Int) -> String
+    {
+        let enhanced = CLITerminalCapabilities.supportsEnhancedCards(useColor: plan.useColor)
+        if plan.brief {
             let rows = CLICardsBriefRenderer.makeRows(cards: cards)
-            rendered = CLICardsBriefRenderer.render(
+            return CLICardsBriefRenderer.render(
                 rows: rows,
                 failures: failures,
-                terminalWidth: CLICardsRenderer.terminalColumnCount(),
-                useColor: useColor,
-                enhanced: enhanced)
-        } else {
-            rendered = CLICardsRenderer.render(
-                cards: cards,
-                failures: failures,
-                terminalWidth: CLICardsRenderer.terminalColumnCount(),
-                useColor: useColor,
+                terminalWidth: terminalWidth,
+                useColor: plan.useColor,
                 enhanced: enhanced)
         }
-        if !rendered.isEmpty {
-            print(rendered)
-        }
-
-        Self.exit(code: exitCode, output: output, kind: exitCode == .success ? .runtime : .provider)
+        return CLICardsRenderer.render(
+            cards: cards,
+            failures: failures,
+            terminalWidth: terminalWidth,
+            useColor: plan.useColor,
+            enhanced: enhanced)
     }
 }

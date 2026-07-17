@@ -92,6 +92,8 @@ extension CodexBarCLI {
                     historyDays: historyDays,
                     cursorCookieHeaderOverride: Self.cursorCostHeaderOverride(provider, settings: cursorCookieSettings),
                     refreshPricingInBackground: false)
+                // Fork: accumulate per-day token history so it outlives the ~30-day log window.
+                Self.persistTokenHistory(snapshot: snapshot, provider: provider)
                 switch format {
                 case .text:
                     sections.append(Self.renderCostText(
@@ -124,6 +126,14 @@ extension CodexBarCLI {
         }
 
         Self.exit(code: exitCode, output: output, kind: exitCode == .success ? .runtime : .provider)
+    }
+
+    // Fork: mirror a snapshot's daily token entries into the local SQLite store. Best-effort:
+    // only the local-log providers persist, and any failure is swallowed (it must never break
+    // the cost command). The watch mode reads this store for long-range trend/heatmap views.
+    static func persistTokenHistory(snapshot: CostUsageTokenSnapshot, provider: UsageProvider) {
+        guard CodexBarCLI.watchCostProviders.contains(provider), !snapshot.daily.isEmpty else { return }
+        try? CostUsageSQLiteStore.defaultStore().upsertDailyEntries(snapshot.daily, provider: provider)
     }
 
     enum CostGroupBy: String {

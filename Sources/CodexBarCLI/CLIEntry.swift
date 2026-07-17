@@ -40,11 +40,16 @@ enum CodexBarCLI {
             Self.bootstrapLogging(path: invocation.path, values: invocation.parsedValues)
             switch invocation.path {
             case ["cards"]:
-                let signalMonitor = CLITerminationSignalMonitor { signalNumber in
-                    CLITerminationSignalMonitor.terminateActiveHelpersAndReraise(signalNumber)
+                // Fork: --watch enters the interactive TUI, which owns its own signal handling.
+                if invocation.parsedValues.flags.contains("watch") {
+                    await self.runCardsWatch(invocation.parsedValues)
+                } else {
+                    let signalMonitor = CLITerminationSignalMonitor { signalNumber in
+                        CLITerminationSignalMonitor.terminateActiveHelpersAndReraise(signalNumber)
+                    }
+                    defer { signalMonitor.cancel() }
+                    await self.runCards(invocation.parsedValues)
                 }
-                defer { signalMonitor.cancel() }
-                await self.runCards(invocation.parsedValues)
             case ["usage"]:
                 let signalMonitor = CLITerminationSignalMonitor { signalNumber in
                     CLITerminationSignalMonitor.terminateActiveHelpersAndReraise(signalNumber)
@@ -321,7 +326,9 @@ enum CodexBarCLI {
         let verbose = values.flags.contains("verbose")
         let rawLevel = values.options["logLevel"]?.last
         let level = Self.resolvedLogLevel(verbose: verbose, rawLevel: rawLevel)
-        let destination: CodexBarLog.Destination = path == ["diagnose"] ? .discard : .stderr
+        // Fork: --watch takes over the screen (alternate buffer); stderr logs would corrupt it.
+        let isWatch = path == ["cards"] && values.flags.contains("watch")
+        let destination: CodexBarLog.Destination = (path == ["diagnose"] || isWatch) ? .discard : .stderr
         return .init(destination: destination, level: level, json: isJSON)
     }
 

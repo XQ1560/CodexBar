@@ -54,34 +54,57 @@ bash /mnt/e/CodexBar/Scripts/wsl/deploy.sh          # 默认部署到 /mnt/d/Cod
 
 脚本会把产物装到 `app/v<版本>-fork/` 并自动把 `bin/codexbar` 指向新版本。
 
-### 终端看板（cardswatch）
+### 终端看板（codexbar cards --watch）
 
-`~/.bashrc` 中的 `cardswatch` 函数每隔 N 秒重新拉取一次卡片（通过 pty 保留 truecolor）：
+内置的交互式全屏看板,按 interval 定时刷新,并用 vim 风格单键在多个视图间即时切换(切换只读缓存,不等待抓取):
 
 ```bash
-cardswatch() {
-    local interval="${1:-60}" out
-    shift 2>/dev/null
-    while :; do
-        out=$(script -qec "codexbar cards $*" /dev/null)
-        printf '\e[H\e[2J%s\n' "$out"
-        sleep "$interval"
-    done
-}
+codexbar cards --watch                       # 默认 60s 刷新
+codexbar cards --watch --interval 90 --provider all
 ```
 
-`codexbar` 需在 PATH 中（如 `ln -s /mnt/d/CodexBar/bin/codexbar ~/.local/bin/codexbar`）。一次完整抓取约 30–50 秒，刷新间隔建议 ≥60 秒。
+快捷键:
+
+| 键 | 作用 |
+|----|------|
+| `w` | 本周 token 趋势(自然周,周一起,每天一根柱) |
+| `m` | 最近 30 天 token 趋势 |
+| `h` | GitHub 风格用量热力图(默认最近 13 周) |
+| `r` | 立即刷新(抓取进行中忽略) |
+| `?` | 帮助浮层(任意键关闭) |
+| `q` / `Ctrl-C` | 退出并恢复终端 |
+
+再次按同一视图键(`w`/`m`/`h`)切回卡片视图。一次完整抓取约 30–50 秒,**倒计时从抓取完成起算**;`--interval` 最小 60 秒,低于则报错退出。原生 TTY 下 truecolor 自动生效,不再需要旧的 `script -qec` pty 包装。
+
+token 消耗按天累积写入 `~/.config/codexbar/token-usage.sqlite3`(遵循 `XDG_CONFIG_HOME`)。由于本地会话日志通常只保留约 30 天,该 SQLite 库让趋势与热力图可以增长到超过日志窗口的历史范围,并为后续统计特性留出数据基础。`codexbar cost` 每次运行也会顺带写库。
+
+`codexbar` 需在 PATH 中(如 `ln -s /mnt/d/CodexBar/bin/codexbar ~/.local/bin/codexbar`)。
+
+> 旧版 `~/.bashrc` 里的 `cardswatch` 循环函数已被 `--watch` 取代,可从 `~/.bashrc` 移除。
 
 ### Fork 改动（相对上游）
 
-均位于 `Sources/CodexBarCLI/CLIRenderer.swift`，带 `// Fork:` 注释，便于合并上游：
+卡片渲染改动位于 `Sources/CodexBarCLI/CLIRenderer.swift`,均带 `// Fork:` 注释,便于合并上游:
 
 1. Codex 卡片列出每张 Limit Reset Credit 的到期时间（`Reset 1: 7/27 08:02`）。
 2. Claude 卡片渲染模型限定的额外窗口（如 Fable 周额度），标签取自窗口标题（"Fable only" → "Fable"）。
 3. Claude 主窗口标签 `Session` → `5h`。
 4. z.ai 三个窗口按 Token-Tracker 顺序显示：`5h` → `Weekly` → `Tools`。
 5. Codex 卡片默认不再显示 `Credits` 行（Limit Reset Credits 保留）。
-6. 构建/部署脚本：`Scripts/wsl/install-swift.sh`、`Scripts/wsl/deploy.sh`。
+
+交互式 watch 模式（vim 风格 TUI + 周/30 天/热力图趋势 + SQLite token 历史):
+
+- `Sources/CodexBarCLI/CLIWatchCommand.swift` — 主循环、后台刷新、帧组装。
+- `Sources/CodexBarCLI/CLIWatchTerminal.swift` — raw mode / alternate screen / 终端恢复。
+- `Sources/CodexBarCLI/CLIWatchInput.swift` — 键盘线程、tick、SIGWINCH。
+- `Sources/CodexBarCLI/CLIWatchState.swift` — 视图状态机、键位映射、状态栏(纯逻辑)。
+- `Sources/CodexBarCLI/CLIWatchTrendRenderer.swift` — 周柱状图、30 天视图、热力图、帮助浮层。
+- `Sources/CodexBarCore/CostUsageTrendBuckets.swift` — 自然周/滚动 N 天/热力图周网格分桶。
+- `Sources/CodexBarCore/CostUsageSQLiteStore.swift` — token 用量 SQLite 持久化。
+- `Sources/CodexBarCLI/CLICardsCommand.swift` — `runCards` 拆分为 plan/fetch/render + `--watch`/`--interval` flag。
+- `Sources/CodexBarCLI/CLICostCommand.swift` — cost 命令顺带写入 SQLite。
+
+构建/部署脚本：`Scripts/wsl/install-swift.sh`、`Scripts/wsl/deploy.sh`。
 
 ## Why
 

@@ -12,7 +12,7 @@ extension CodexBarCLI {
                         [--account <label>] [--account-index <index>] [--all-accounts]
                         [--no-credits] [--no-color] [--status] [--source <auto|web|cli|oauth|api>]
                         [--web-timeout <seconds>] [--web-debug-dump-html] [--antigravity-plan-debug] [--augment-debug]
-                        [--brief]
+                        [--brief] [--watch] [--interval <seconds>]
 
         Description:
           Print a one-shot usage snapshot as a responsive card grid in the terminal.
@@ -23,6 +23,14 @@ extension CodexBarCLI {
           Sentinel accounts remain visible without metrics; claude-swap adapter failures use a separate footer entry.
           Use --brief for a compact table layout (Provider / Usage / Reset).
           Stdout is always the rendered card/table text; --json-output only affects stderr logs.
+
+          Fork: --watch opens an interactive full-screen dashboard that refreshes on a timer
+          (default 60s, minimum 60s; a single fetch takes ~30-50s and the countdown starts once
+          it finishes). vim-style single keys switch views without waiting for the next fetch:
+            w  weekly token trend      m  30-day token trend    h  usage heatmap
+            r  refresh now             ?  toggle help overlay    q / Ctrl-C  quit
+          Token history is accumulated in ~/.config/codexbar/token-usage.sqlite3 so trends and
+          the heatmap can grow past the ~30-day session-log window.
 
         Global flags:
           -h, --help      Show help
@@ -38,6 +46,8 @@ extension CodexBarCLI {
           codexbar cards --provider all --status
           codexbar cards --brief
           codexbar cards --no-color
+          codexbar cards --watch
+          codexbar cards --watch --interval 90 --provider all
         """
     }
 
