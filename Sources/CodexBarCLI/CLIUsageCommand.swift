@@ -739,6 +739,13 @@ extension CodexBarCLI {
             // Linux Auto/legacy-cli can use FACTORY_API_KEY without browser cookies.
             return false
         }
+        // Fork: Linux Auto can use the DEEPSEEK_API_KEY balance API without browser cookies.
+        if provider == .deepseek,
+           sourceMode == .auto,
+           environment.map({ ProviderTokenResolver.deepseekToken(environment: $0) != nil }) == true
+        {
+            return false
+        }
         if provider == .mimo,
            sourceMode == .auto,
            let environment,
