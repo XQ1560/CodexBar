@@ -383,6 +383,12 @@ actor ClaudeCLISession {
         for key in env.keys where key.hasPrefix("ANTHROPIC_") {
             env.removeValue(forKey: key)
         }
+        // Fork: the WSL launcher exports CLAUDE_CONFIG_DIR pointing at the Windows client
+        // data so the cost/token scanner finds the real usage logs. But the Claude CLI
+        // subprocess needs its own WSL credentials (~/.claude) to run /usage, so drop the
+        // override here — the CLI falls back to its default config dir and authenticates
+        // with the WSL install's session.
+        env.removeValue(forKey: "CLAUDE_CONFIG_DIR")
         return env
     }
 
