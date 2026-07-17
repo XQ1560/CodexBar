@@ -8,7 +8,8 @@ import Foundation
 
 extension CodexBarCLI {
     /// Providers that expose local token history (used for the trend/heatmap views + SQLite).
-    static let watchCostProviders: Set<UsageProvider> = [.claude, .codex]
+    /// Fork: `.zai` is included so ZCode's local transcripts feed the trend views.
+    static let watchCostProviders: Set<UsageProvider> = [.claude, .codex, .zai]
     /// How many days of history a refresh pulls — enough to fill the 26-week heatmap once
     /// SQLite has accumulated that much (the live log scan is bounded by log retention).
     static let watchHistoryDays = 183
@@ -150,12 +151,6 @@ extension CodexBarCLI {
     private static func fetchAndMergeTokenHistory(
         providers: [UsageProvider]) async -> [UsageProvider: [CostUsageDailyReport.Entry]]
     {
-        // Fork: demo injection — fake multi-provider, multi-model data so the stacked
-        // trend views can be eyeballed without real credentials. Remove by clearing
-        // CODEXBAR_WATCH_DEMO. Never touches the SQLite store.
-        if Self.shouldInjectDemoData() {
-            return Self.demoTokenHistory(for: providers)
-        }
         guard !providers.isEmpty else { return [:] }
         let store = CostUsageSQLiteStore.defaultStore()
         let fetcher = CostUsageFetcher()
@@ -165,23 +160,88 @@ extension CodexBarCLI {
         let storedProviders = (try? store.allStoredProviders()) ?? []
         let providersToScan = Array(Set(providers + storedProviders)).sorted { $0.rawValue < $1.rawValue }
         for provider in providersToScan {
-            do {
-                let snapshot = try await fetcher.loadTokenSnapshot(
-                    provider: provider,
-                    forceRefresh: false,
-                    historyDays: Self.watchHistoryDays,
-                    refreshPricingInBackground: false)
-                try? store.upsertDailyEntries(snapshot.daily, provider: provider)
-                result[provider] = store.mergedDailyEntries(provider: provider, snapshotEntries: snapshot.daily)
-            } catch {
-                // Fall back to whatever history is already on disk.
-                if let stored = try? store.loadDailyRows(provider: provider), !stored.isEmpty {
-                    result[provider] = stored.map(\.asDailyEntry)
-                }
+            let entries = await Self.fetchProviderTokenHistory(
+                provider: provider, fetcher: fetcher, store: store)
+            if !entries.isEmpty {
+                result[provider] = entries
             }
         }
         return result
     }
+
+    /// Fork: one provider's merged token history. Codex/Claude/VertexAI/Bedrock go through
+    /// the shared `CostUsageFetcher` (local log scan + cache). `.zai` is special: it has no
+    /// local-log path in the upstream fetcher, so we read ZCode's transcripts directly via
+    /// `ZCodeLocalUsageScanner` and persist them like the other providers. On any failure we
+    /// fall back to whatever is already in SQLite so a transient scan error never blanks a
+    /// provider that has history on disk.
+    private static func fetchProviderTokenHistory(
+        provider: UsageProvider,
+        fetcher: CostUsageFetcher,
+        store: CostUsageSQLiteStore) async -> [CostUsageDailyReport.Entry]
+    {
+        if provider == .zai {
+            return await Self.fetchZCodeTokenHistory(store: store)
+        }
+        do {
+            // Fork: when CODEXBAR_LOCAL_CODEX_HOME / CODEXBAR_LOCAL_CLAUDE_CONFIG_DIR are set
+            // (the launcher points them at the Windows client data), surface them through the
+            // environment the scanner reads so we scan the real Codex/Claude logs, not the
+            // isolated WSL-only copies.
+            var environment = ProcessInfo.processInfo.environment
+            if let codexHome = environment["CODEXBAR_LOCAL_CODEX_HOME"], !codexHome.isEmpty {
+                environment["CODEX_HOME"] = codexHome
+            }
+            if let claudeDir = environment["CODEXBAR_LOCAL_CLAUDE_CONFIG_DIR"], !claudeDir.isEmpty {
+                environment["CLAUDE_CONFIG_DIR"] = claudeDir
+            }
+            let snapshot = try await fetcher.loadTokenSnapshot(
+                provider: provider,
+                environment: environment,
+                forceRefresh: false,
+                historyDays: Self.watchHistoryDays,
+                refreshPricingInBackground: false)
+            try? store.upsertDailyEntries(snapshot.daily, provider: provider)
+            return store.mergedDailyEntries(provider: provider, snapshotEntries: snapshot.daily)
+        } catch {
+            // Fall back to whatever history is already on disk.
+            if let stored = try? store.loadDailyRows(provider: provider), !stored.isEmpty {
+                return stored.map(\.asDailyEntry)
+            }
+            return []
+        }
+    }
+
+    /// Fork: reads ZCode agent transcripts from `ZCODE_HOME/cli/agents` and persists them
+    /// under the `.zai` provider so the trend/heatmap views render ZCode usage. Runs off the
+    /// main actor (file I/O) and never throws — a scan failure falls back to stored rows.
+    private static func fetchZCodeTokenHistory(
+        store: CostUsageSQLiteStore) async -> [CostUsageDailyReport.Entry]
+    {
+        let entries = await Task.detached(priority: .utility) {
+            let scanner = ZCodeLocalUsageScanner.defaultScanner()
+            let calendar = Self.trendCalendar
+            let since = calendar.date(byAdding: .day, value: -Self.watchHistoryDays, to: Date())
+            return (try? scanner.loadDailyEntries(since: since, calendar: calendar)) ?? []
+        }.value
+        if !entries.isEmpty {
+            try? store.upsertDailyEntries(entries, provider: .zai)
+        }
+        if !entries.isEmpty {
+            return store.mergedDailyEntries(provider: .zai, snapshotEntries: entries)
+        }
+        if let stored = try? store.loadDailyRows(provider: .zai), !stored.isEmpty {
+            return stored.map(\.asDailyEntry)
+        }
+        return []
+    }
+
+    /// UTC calendar for consistent day bucketing across providers.
+    private static let trendCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        return calendar
+    }()
 
     // MARK: - Frame rendering
 
@@ -316,150 +376,6 @@ extension CodexBarCLI {
             || (entry.inputTokens ?? 0) > 0
             || (entry.outputTokens ?? 0) > 0
             || (entry.costUSD ?? 0) > 0
-    }
-
-    // MARK: - Fork: demo data injection
-
-    /// True when CODEXBAR_WATCH_DEMO is set to a truthy value. Lets the trend views be
-    /// eyeballed with fabricated multi-provider data without real credentials.
-    static func shouldInjectDemoData(
-        environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool
-    {
-        guard let raw = environment["CODEXBAR_WATCH_DEMO"]?.lowercased() else { return false }
-        return !["0", "false", "no", "off", ""].contains(raw)
-    }
-
-    /// Fabricated per-provider daily history with realistic per-model breakdowns, spanning
-    /// the last ~40 days so the 30-day view and heatmap both show content. Pure function
-    /// of the current date so frames are stable within a run.
-    static func demoTokenHistory(for providers: [UsageProvider]) -> [UsageProvider: [CostUsageDailyReport.Entry]] {
-        // Always show a fixed cast: Claude + Codex + Cursor regardless of the enabled set,
-        // so the stacked chart has multiple colored bands.
-        let cast: [UsageProvider] = [.claude, .codex, .cursor]
-        var result: [UsageProvider: [CostUsageDailyReport.Entry]] = [:]
-        let calendar = Self.demoCalendar
-        let today = calendar.startOfDay(for: Date())
-        for provider in cast {
-            let entries = (0..<40).map { dayOffset -> CostUsageDailyReport.Entry in
-                let date = calendar.date(byAdding: .day, value: -dayOffset, to: today) ?? today
-                return Self.demoEntry(provider: provider, date: date, dayOffset: dayOffset)
-            }
-            result[provider] = entries
-        }
-        _ = providers
-        return result
-    }
-
-    private static let demoCalendar: Calendar = {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        return calendar
-    }()
-
-    private static func demoEntry(provider: UsageProvider, date: Date, dayOffset: Int) -> CostUsageDailyReport.Entry {
-        let dayKey = Self.demoDayKey(date)
-        // Weekly-ish pattern: weekday peaks, weekend dip. Today partial. Seeded per day.
-        let weekday = Self.demoCalendar.component(.weekday, from: date) // 1=Sun..7=Sat
-        let weekend = weekday == 1 || weekday == 7
-        let todayFactor = dayOffset == 0 ? 0.35 : 1.0
-        let weekendFactor = weekend ? 0.25 : 1.0
-        let wave = 1.0 + 0.3 * sin(Double(dayOffset) * 0.7) // slow oscillation
-        let base = 1_000_000.0 * weekendFactor * todayFactor * wave
-
-        let (input, output, cacheRead, cacheWrite, models) = Self.demoShape(
-            provider: provider, base: base, dayOffset: dayOffset)
-        let total = input + output + cacheRead + cacheWrite
-        let cost = Self.demoCost(provider: provider, total: total)
-        return CostUsageDailyReport.Entry(
-            date: dayKey,
-            inputTokens: input,
-            outputTokens: output,
-            cacheReadTokens: cacheRead,
-            cacheCreationTokens: cacheWrite,
-            totalTokens: total,
-            requestCount: max(1, Int(total / 50_000)),
-            costUSD: cost,
-            modelsUsed: models.map(\.name),
-            modelBreakdowns: models.map { breakdown in
-                CostUsageDailyReport.ModelBreakdown(
-                    modelName: breakdown.name,
-                    costUSD: breakdown.cost,
-                    totalTokens: breakdown.tokens,
-                    requestCount: max(1, Int(breakdown.tokens / 50_000)))
-            })
-    }
-
-    private static func demoDayKey(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = Self.demoCalendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    /// Per-provider token component split + per-model shape for a base token volume.
-    private static func demoShape(
-        provider: UsageProvider,
-        base: Double,
-        dayOffset: Int) -> (input: Int, output: Int, cacheRead: Int, cacheWrite: Int,
-            models: [(name: String, tokens: Int, cost: Double)])
-    {
-        switch provider {
-        case .claude:
-            // Cache-heavy coding workflow.
-            let cacheRead = Int(base * 2.4)
-            let cacheWrite = Int(base * 0.25)
-            let input = Int(base * 0.6)
-            let output = Int(base * 0.45)
-            let sonnet = Int(Double(input + output) * 0.7)
-            let haiku = (input + output) - sonnet
-            let models: [(name: String, tokens: Int, cost: Double)] = [
-                ("claude-sonnet", sonnet, Double(sonnet) / 3_000_000 * 15.0),
-                ("claude-haiku", haiku, Double(haiku) / 3_000_000 * 0.75),
-            ]
-            return (input, output, cacheRead, cacheWrite, models)
-        case .codex:
-            // More output-heavy.
-            let cacheRead = Int(base * 1.3)
-            let cacheWrite = Int(base * 0.15)
-            let input = Int(base * 0.5)
-            let output = Int(base * 0.8)
-            let gpt5 = Int(Double(input + output) * 0.8)
-            let gpt5mini = (input + output) - gpt5
-            let models: [(name: String, tokens: Int, cost: Double)] = [
-                ("gpt-5-codex", gpt5, Double(gpt5) / 3_000_000 * 10.0),
-                ("gpt-5-mini", gpt5mini, Double(gpt5mini) / 3_000_000 * 1.25),
-            ]
-            return (input, output, cacheRead, cacheWrite, models)
-        case .cursor:
-            // Lighter usage, mostly output.
-            let cacheRead = Int(base * 0.3)
-            let cacheWrite = Int(base * 0.05)
-            let input = Int(base * 0.2)
-            let output = Int(base * 0.4)
-            let models: [(name: String, tokens: Int, cost: Double)] = [
-                ("cursor-small", (input + output), Double(input + output) / 3_000_000 * 0.5),
-            ]
-            return (input, output, cacheRead, cacheWrite, models)
-        default:
-            let input = Int(base * 0.4)
-            let output = Int(base * 0.4)
-            let models: [(name: String, tokens: Int, cost: Double)] = [
-                ("model-a", (input + output), Double(input + output) / 3_000_000 * 5.0),
-            ]
-            return (input, output, Int(base * 0.2), Int(base * 0.05), models)
-        }
-    }
-
-    private static func demoCost(provider: UsageProvider, total: Int) -> Double {
-        let perMillion: Double
-        switch provider {
-        case .claude: perMillion = 8.0
-        case .codex: perMillion = 6.0
-        case .cursor: perMillion = 1.0
-        default: perMillion = 4.0
-        }
-        return Double(total) / 1_000_000.0 * perMillion
     }
 
     private static func overlayHelp(base bodyHeight: Int, cols: Int, interval: Int) -> [String] {

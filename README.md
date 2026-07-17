@@ -93,17 +93,28 @@ token 消耗按天累积写入 `~/.config/codexbar/token-usage.sqlite3`(遵循 `
 4. z.ai 三个窗口按 Token-Tracker 顺序显示：`5h` → `Weekly` → `Tools`。
 5. Codex 卡片默认不再显示 `Credits` 行（Limit Reset Credits 保留）。
 
-交互式 watch 模式（vim 风格 TUI + 周/30 天/热力图趋势 + SQLite token 历史):
+交互式 watch 模式（vim 风格 TUI + 周/月/热力图趋势 + 多 provider 真实 token 历史):
 
-- `Sources/CodexBarCLI/CLIWatchCommand.swift` — 主循环、后台刷新、帧组装。
+- `Sources/CodexBarCLI/CLIWatchCommand.swift` — 主循环、后台刷新、帧组装、多 provider token 历史聚合。
 - `Sources/CodexBarCLI/CLIWatchTerminal.swift` — raw mode / alternate screen / 终端恢复。
 - `Sources/CodexBarCLI/CLIWatchInput.swift` — 键盘线程、tick、SIGWINCH。
 - `Sources/CodexBarCLI/CLIWatchState.swift` — 视图状态机、键位映射、状态栏(纯逻辑)。
-- `Sources/CodexBarCLI/CLIWatchTrendRenderer.swift` — 周柱状图、30 天视图、热力图、帮助浮层。
-- `Sources/CodexBarCore/CostUsageTrendBuckets.swift` — 自然周/滚动 N 天/热力图周网格分桶。
+- `Sources/CodexBarCLI/CLIWatchTrendRenderer.swift` — 周柱状图、月视图、GitHub 风格热力图、帮助浮层。
+- `Sources/CodexBarCore/CostUsageTrendBuckets.swift` — 自然周/滚动 N 天/热力图周网格/堆叠分桶。
 - `Sources/CodexBarCore/CostUsageSQLiteStore.swift` — token 用量 SQLite 持久化。
-- `Sources/CodexBarCLI/CLICardsCommand.swift` — `runCards` 拆分为 plan/fetch/render + `--watch`/`--interval` flag。
+- `Sources/CodexBarCore/ZCodeLocalUsageScanner.swift` — 读取 ZCode (`~/.zcode/cli/agents`) transcript,按 turnId 关联 model + token 用量。
+- `Sources/CodexBarCLI/CLICardsCommand.swift` — `runCards` 拆分为 plan/fetch/render + `--watch`/`--interval`/`--month` flag。
 - `Sources/CodexBarCLI/CLICostCommand.swift` — cost 命令顺带写入 SQLite。
+
+watch 趋势视图的数据来源(自动探测 Windows 客户端数据,CLI + Desktop 共用同一目录):
+
+| provider | 本地数据路径 | 环境变量覆盖 |
+|---|---|---|
+| Codex (CLI+Desktop) | `~/.codex/sessions/**/*.jsonl` | `CODEXBAR_LOCAL_CODEX_HOME` |
+| Claude (CLI+Desktop) | `~/.claude/projects/**/*.jsonl` | `CODEXBAR_LOCAL_CLAUDE_CONFIG_DIR` |
+| ZCode (CLI+Desktop) | `~/.zcode/cli/agents/**/transcript.jsonl` | `ZCODE_HOME` |
+
+`bin/codexbar` 启动器会自动扫描 `/mnt/c/Users/*/` 定位 Windows 用户目录并设置上述变量,使趋势视图直接读取真实 token 历史(无需 API key)。三个产品的 Desktop 都是 CLI 的 Electron/WebView 壳,token 数据统一写入各自的 CLI 目录。
 
 构建/部署脚本：`Scripts/wsl/install-swift.sh`、`Scripts/wsl/deploy.sh`。
 
