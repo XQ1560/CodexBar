@@ -450,6 +450,21 @@ enum CLIRenderer {
         return String(trimmed.dropLast(5)).trimmingCharacters(in: .whitespaces)
     }
 
+    /// Fork: "in 5h" style text for an idle window without a concrete reset date
+    /// (rendered as "Reset in 5h" on cards).
+    private static func windowDurationResetText(_ window: RateWindow) -> String? {
+        guard let minutes = window.windowMinutes, minutes > 0 else { return nil }
+        let days = minutes / 1440
+        let hours = (minutes % 1440) / 60
+        let mins = minutes % 60
+        var parts: [String] = []
+        if days > 0 { parts.append("\(days)d") }
+        if hours > 0 { parts.append("\(hours)h") }
+        if mins > 0 { parts.append("\(mins)m") }
+        guard !parts.isEmpty else { return nil }
+        return "in \(parts.joined(separator: " "))"
+    }
+
     /// Fork: countdown + local-time expiry for a Codex reset credit
     /// (e.g. "in 2d 2h 20m, 07/27 08:02").
     private static func resetCreditExpiryString(_ date: Date, now: Date) -> String {
@@ -560,10 +575,10 @@ enum CLIRenderer {
         var reset = detailBacked
             ? self.resetLineForDetailBackedWindow(window: window, style: resetStyle, now: now)
             : self.resetLine(for: window, style: resetStyle, now: now)
-        // Fork: z.ai window labels ("5 hours window") are not reset info; only show a
-        // real "Resets in ..." countdown when a concrete reset date exists.
+        // Fork: z.ai window labels ("5 hours window") are not reset info; without a
+        // concrete reset date show the full window as countdown ("Reset in 5h").
         if provider == .zai, window.resetsAt == nil {
-            reset = nil
+            reset = self.windowDurationResetText(window)
         }
         let detailText = detailBacked ? self.detailLineForDetailBackedWindow(window: window) : nil
         return CLICardMetric(
