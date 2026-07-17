@@ -341,12 +341,15 @@ enum CLICardsRenderer {
                     style: .subtle))
             }
             if let detailText = metric.detailText {
-                lines.append(Self.contentLine(
-                    detailText,
-                    innerWidth: innerWidth,
-                    useColor: useColor,
-                    enhanced: enhanced,
-                    style: .subtle))
+                // Fork: wrap long detail lines (e.g. DeepSeek balance) instead of truncating.
+                for wrapped in Self.wrapPlainText(detailText, width: innerWidth) {
+                    lines.append(Self.contentLine(
+                        wrapped,
+                        innerWidth: innerWidth,
+                        useColor: useColor,
+                        enhanced: enhanced,
+                        style: .subtle))
+                }
             }
         }
 
