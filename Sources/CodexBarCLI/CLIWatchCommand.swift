@@ -184,20 +184,12 @@ extension CodexBarCLI {
             return await Self.fetchZCodeTokenHistory(store: store)
         }
         do {
-            // Fork: when CODEXBAR_LOCAL_CODEX_HOME / CODEXBAR_LOCAL_CLAUDE_CONFIG_DIR are set
-            // (the launcher points them at the Windows client data), surface them through the
-            // environment the scanner reads so we scan the real Codex/Claude logs, not the
-            // isolated WSL-only copies.
-            var environment = ProcessInfo.processInfo.environment
-            if let codexHome = environment["CODEXBAR_LOCAL_CODEX_HOME"], !codexHome.isEmpty {
-                environment["CODEX_HOME"] = codexHome
-            }
-            if let claudeDir = environment["CODEXBAR_LOCAL_CLAUDE_CONFIG_DIR"], !claudeDir.isEmpty {
-                environment["CLAUDE_CONFIG_DIR"] = claudeDir
-            }
+            // Fork: the launcher exports CODEX_HOME / CLAUDE_CONFIG_DIR pointing at the real
+            // Windows client data, and the upstream CostUsageScanner reads those straight from
+            // ProcessInfo.environment (it does not consult the per-call environment we pass
+            // here), so we just defer to the default environment.
             let snapshot = try await fetcher.loadTokenSnapshot(
                 provider: provider,
-                environment: environment,
                 forceRefresh: false,
                 historyDays: Self.watchHistoryDays,
                 refreshPricingInBackground: false)
