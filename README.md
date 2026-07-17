@@ -61,6 +61,7 @@ bash /mnt/e/CodexBar/Scripts/wsl/deploy.sh          # 默认部署到 /mnt/d/Cod
 ```bash
 codexbar cards --watch                       # 默认 60s 刷新
 codexbar cards --watch --interval 90 --provider all
+codexbar cards --watch --month 30            # month 视图显示最近 30 天(默认 15)
 ```
 
 快捷键:
@@ -68,7 +69,7 @@ codexbar cards --watch --interval 90 --provider all
 | 键 | 作用 |
 |----|------|
 | `w` | 本周 token 趋势(自然周,周一起,每天一根柱) |
-| `m` | 最近 30 天 token 趋势 |
+| `m` | 最近 N 天 token 趋势(N 由 `--month` 指定,默认 15) |
 | `h` | GitHub 风格用量热力图(默认最近 13 周) |
 | `r` | 立即刷新(抓取进行中忽略) |
 | `?` | 帮助浮层(任意键关闭) |

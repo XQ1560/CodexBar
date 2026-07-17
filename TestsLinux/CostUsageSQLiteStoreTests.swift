@@ -145,5 +145,26 @@ struct CostUsageSQLiteStoreTests {
         let rows = try store.loadDailyRows(provider: .claude, since: "2026-07-01")
         #expect(rows.map(\.day) == ["2026-07-10", "2026-07-15"])
     }
+
+    @Test
+    func `allStoredProviders lists every provider with rows`() throws {
+        let (store, cleanup) = Self.temporaryStore()
+        defer { cleanup() }
+
+        try store.upsertDailyEntries([Self.entry("2026-07-13", tokens: 100)], provider: .claude)
+        try store.upsertDailyEntries([Self.entry("2026-07-13", tokens: 900)], provider: .codex)
+
+        let providers = try store.allStoredProviders()
+        let expected: [UsageProvider] = [.claude, .codex]
+        #expect(providers.map(\.rawValue).sorted() == expected.map(\.rawValue).sorted())
+    }
+
+    @Test
+    func `allStoredProviders returns empty for a missing database`() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codexbar-missing-\(UUID().uuidString)/token-usage.sqlite3")
+        let store = CostUsageSQLiteStore(databaseURL: url)
+        #expect(try store.allStoredProviders().isEmpty)
+    }
 }
 #endif

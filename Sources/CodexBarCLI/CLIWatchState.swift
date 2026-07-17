@@ -109,6 +109,17 @@ struct WatchStatusInfo {
     let secondsUntilRefresh: Int?
     let spinnerFrame: Int
     let lastError: String?
+    // Fork: day count for the month view, so the status-bar tag shows the real window
+    // (e.g. "15d") instead of a hardcoded "30d".
+    let monthDays: Int
+
+    /// Status-bar tag for the current view. The month view shows its day count.
+    var statusTag: String {
+        switch self.view {
+        case .thirtyDays: "\(self.monthDays)d"
+        default: self.view.title
+        }
+    }
 }
 
 enum CLIWatchStatusBar {
@@ -122,8 +133,10 @@ enum CLIWatchStatusBar {
         useColor: Bool,
         timeString: (Date) -> String) -> String
     {
-        let keyHints = "w week · m 30d · h heatmap · r refresh · ? help · q quit"
-        let viewTag = "[\(info.view.title)]"
+        // Fork: key hints reflect the configured month-view day count (e.g. "m 15d").
+        let monthTag = "\(info.monthDays)d"
+        let keyHints = "w week · m \(monthTag) · h heatmap · r refresh · ? help · q quit"
+        let viewTag = "[\(info.statusTag)]"
 
         var middle = ""
         if let fetchedAt = info.lastFetchedAt {

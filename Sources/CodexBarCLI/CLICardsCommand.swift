@@ -65,12 +65,16 @@ struct CardsOptions: CommanderParsable {
     var brief: Bool = false
 
     // Fork: interactive full-screen watch mode (vim-style single keys: w/m/h/r/?/q).
-    @Flag(name: .long("watch"), help: "Interactive full-screen watch mode (q quit · r refresh · w week · m 30d · h heatmap)")
+    @Flag(name: .long("watch"), help: "Interactive full-screen watch mode (q quit · r refresh · m month · h heatmap)")
     var watch: Bool = false
 
     // Fork: refresh interval for --watch (seconds; minimum 60).
     @Option(name: .long("interval"), help: "Watch refresh interval in seconds (default 60, minimum 60)")
     var interval: Int?
+
+    // Fork: number of days the month (`m`) view spans (default 15, minimum 7, maximum 90).
+    @Option(name: .long("month"), help: "Month view day count (default 15, minimum 7, maximum 90)")
+    var month: Int?
 }
 
 // Fork: runCards is split into makeCardsRunPlan / fetchCardsOnce / renderCardsOutput so
@@ -93,6 +97,8 @@ struct CardsRunPlan: @unchecked Sendable {
     let brief: Bool
     let resetStyle: ResetTimeDisplayStyle
     let weeklyWorkDays: Int?
+    // Fork: day count for the month (`m`) trend view.
+    let monthDays: Int
 }
 
 extension CodexBarCLI {
@@ -227,7 +233,34 @@ extension CodexBarCLI {
             useColor: useColor,
             brief: brief,
             resetStyle: resetStyle,
-            weeklyWorkDays: weeklyWorkDays)
+            weeklyWorkDays: weeklyWorkDays,
+            monthDays: Self.decodeMonthDays(values, output: output))
+    }
+
+    // Fork: decodes --month (month-view day count). Default 15, range [7, 90]. Anything
+    // outside the range or non-integer exits with an args error before the TUI starts.
+    static let defaultMonthDays = 15
+    static let minMonthDays = 7
+    static let maxMonthDays = 90
+
+    static func decodeMonthDays(_ values: ParsedValues, output: CLIOutputPreferences) -> Int {
+        guard let raw = values.options["month"]?.last else { return Self.defaultMonthDays }
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard let parsed = Int(trimmed) else {
+            Self.exit(
+                code: .failure,
+                message: "Error: --month must be an integer number of days.",
+                output: output,
+                kind: .args)
+        }
+        if parsed < Self.minMonthDays || parsed > Self.maxMonthDays {
+            Self.exit(
+                code: .failure,
+                message: "Error: --month must be between \(Self.minMonthDays) and \(Self.maxMonthDays) days.",
+                output: output,
+                kind: .args)
+        }
+        return parsed
     }
 
     // Fork: one full provider-fetch pass. Called once by `cards`, repeatedly by `--watch`.

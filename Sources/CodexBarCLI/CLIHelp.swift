@@ -12,7 +12,7 @@ extension CodexBarCLI {
                         [--account <label>] [--account-index <index>] [--all-accounts]
                         [--no-credits] [--no-color] [--status] [--source <auto|web|cli|oauth|api>]
                         [--web-timeout <seconds>] [--web-debug-dump-html] [--antigravity-plan-debug] [--augment-debug]
-                        [--brief] [--watch] [--interval <seconds>]
+                        [--brief] [--watch] [--interval <seconds>] [--month <days>]
 
         Description:
           Print a one-shot usage snapshot as a responsive card grid in the terminal.

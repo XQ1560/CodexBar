@@ -180,6 +180,42 @@ public struct CostUsageSQLiteStore: Sendable {
         return rows
     }
 
+    /// Fork: distinct provider keys that have at least one stored row. Used by the watch
+    /// loop so the heatmap/trend views cover every provider that ever wrote history, not
+    /// just the currently-enabled set.
+    public func allStoredProviders() throws -> [UsageProvider] {
+        guard FileManager.default.fileExists(atPath: self.databaseURL.path) else { return [] }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(self.databaseURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            let message = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown error"
+            sqlite3_close(db)
+            throw CostUsageSQLiteStoreError.openFailed(message)
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 250)
+
+        let sql = "SELECT DISTINCT provider FROM daily_usage ORDER BY provider ASC"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw CostUsageSQLiteStoreError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var providers: [UsageProvider] = []
+        while true {
+            let step = sqlite3_step(stmt)
+            if step == SQLITE_DONE { break }
+            guard step == SQLITE_ROW else {
+                throw CostUsageSQLiteStoreError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+            }
+            let raw = Self.columnText(stmt, 0)
+            if let provider = UsageProvider(rawValue: raw) {
+                providers.append(provider)
+            }
+        }
+        return providers
+    }
+
     /// Stored history merged with a live snapshot's daily entries; snapshot wins on
     /// overlapping days. Result is plain entries ready for trend bucketing.
     public func mergedDailyEntries(
