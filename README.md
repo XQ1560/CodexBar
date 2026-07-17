@@ -15,6 +15,74 @@ Tiny macOS 14+ menu bar app that keeps **AI coding-provider limits visible** and
 
 <img src="docs/codexbar.png" alt="CodexBar menu popover with provider tiles, usage bars, and reset countdowns" width="520" />
 
+## 第一章：本机 WSL 部署与配置（Fork）
+
+本 fork 在 Windows + WSL2（Ubuntu 24.04）下把 `CodexBarCLI` 部署为终端用量看板，并对卡片渲染做了少量改动（见下文"Fork 改动"）。
+
+### 目录约定
+
+- 源码仓库：`E:\CodexBar`（WSL 内为 `/mnt/e/CodexBar`）
+- 运行时根目录：`D:\CodexBar`（WSL 内为 `/mnt/d/CodexBar`），结构如下：
+
+```
+D:\CodexBar
+├── bin\codexbar          # 启动器：设置环境变量与代理后 exec 对应版本的 CodexBarCLI
+├── app\v<版本>[-fork]\   # 各版本的 CodexBarCLI 二进制 + VERSION
+├── config\config.json    # CODEXBAR_CONFIG（provider 开关、API key）
+├── codex-home\           # CODEX_HOME
+├── cache\ data\ tmp\     # XDG_CACHE_HOME / XDG_DATA_HOME / TMPDIR
+```
+
+`bin/codexbar` 会在未设置代理时自动使用 Windows 宿主机代理 `http://<宿主IP>:7897`（可用 `CODEXBAR_PROXY_PORT` 覆盖）。
+
+### 从源码构建并部署（WSL）
+
+一次性准备（安装系统依赖需 sudo；Swift 工具链装到 `~/swift`，不需要 sudo）：
+
+```bash
+sudo apt-get install -y binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 \
+  libgcc-13-dev libpython3-dev libsqlite3-0 libsqlite3-dev libstdc++-13-dev \
+  libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
+bash /mnt/e/CodexBar/Scripts/wsl/install-swift.sh
+```
+
+每次改完代码后构建 + 部署（源码会先 rsync 到 WSL 原生文件系统再编译，避免 drvfs 拖慢构建）：
+
+```bash
+bash /mnt/e/CodexBar/Scripts/wsl/deploy.sh          # 默认部署到 /mnt/d/CodexBar
+```
+
+脚本会把产物装到 `app/v<版本>-fork/` 并自动把 `bin/codexbar` 指向新版本。
+
+### 终端看板（cardswatch）
+
+`~/.bashrc` 中的 `cardswatch` 函数每隔 N 秒重新拉取一次卡片（通过 pty 保留 truecolor）：
+
+```bash
+cardswatch() {
+    local interval="${1:-60}" out
+    shift 2>/dev/null
+    while :; do
+        out=$(script -qec "codexbar cards $*" /dev/null)
+        printf '\e[H\e[2J%s\n' "$out"
+        sleep "$interval"
+    done
+}
+```
+
+`codexbar` 需在 PATH 中（如 `ln -s /mnt/d/CodexBar/bin/codexbar ~/.local/bin/codexbar`）。一次完整抓取约 30–50 秒，刷新间隔建议 ≥60 秒。
+
+### Fork 改动（相对上游）
+
+均位于 `Sources/CodexBarCLI/CLIRenderer.swift`，带 `// Fork:` 注释，便于合并上游：
+
+1. Codex 卡片列出每张 Limit Reset Credit 的到期时间（`Reset 1: 7/27 08:02`）。
+2. Claude 卡片渲染模型限定的额外窗口（如 Fable 周额度），标签取自窗口标题（"Fable only" → "Fable"）。
+3. Claude 主窗口标签 `Session` → `5h`。
+4. z.ai 三个窗口按 Token-Tracker 顺序显示：`5h` → `Weekly` → `Tools`。
+5. Codex 卡片默认不再显示 `Credits` 行（Limit Reset Credits 保留）。
+6. 构建/部署脚本：`Scripts/wsl/install-swift.sh`、`Scripts/wsl/deploy.sh`。
+
 ## Why
 
 - **Plan around resets.** Per-provider session, weekly, and monthly windows with countdowns to the next reset — stop guessing whether to start that long task.

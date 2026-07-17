@@ -426,7 +426,47 @@ enum CLIRenderer {
                 resetStyle: resetStyle,
                 now: now))
         }
+        // Fork: z.ai cards follow Token-Tracker order 5h → Weekly → Tools
+        // (tertiary, primary, secondary).
+        if provider == .zai, metrics.count == 3 {
+            metrics = [metrics[2], metrics[0], metrics[1]]
+        }
+        // Fork: render model-scoped extra windows (e.g. Claude "Fable only" weekly quota).
+        for named in snapshot.extraRateWindows ?? [] where named.usageKnown {
+            metrics.append(self.makeCardMetric(
+                provider: provider,
+                label: self.extraWindowLabel(named.title),
+                window: named.window,
+                resetStyle: resetStyle,
+                now: now))
+        }
         return metrics
+    }
+
+    /// Fork: compact label for named extra rate windows ("Fable only" → "Fable").
+    private static func extraWindowLabel(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasSuffix(" only") else { return trimmed }
+        return String(trimmed.dropLast(5)).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Fork: countdown + local-time expiry for a Codex reset credit
+    /// (e.g. "in 2d 2h 20m, 07/27 08:02").
+    private static func resetCreditExpiryString(_ date: Date, now: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MM/dd HH:mm"
+        let timestamp = formatter.string(from: date)
+        let totalMinutes = Int(date.timeIntervalSince(now) / 60)
+        guard totalMinutes > 0 else { return timestamp }
+        let days = totalMinutes / 1440
+        let hours = (totalMinutes % 1440) / 60
+        let minutes = totalMinutes % 60
+        var parts: [String] = []
+        if days > 0 { parts.append("\(days)d") }
+        if hours > 0 { parts.append("\(hours)h") }
+        if minutes > 0 || parts.isEmpty { parts.append("\(minutes)m") }
+        return "in \(parts.joined(separator: " ")), \(timestamp)"
     }
 
     static func collectCardInfoLines(
@@ -442,14 +482,18 @@ enum CLIRenderer {
             let inventory = resetCredits.availableInventory(at: now)
             let value = inventory.count == 1 ? "1 available" : "\(inventory.count) available"
             lines.append(self.labelValueLine("Limit Reset Credits", value: value, useColor: useColor))
+            // Fork: show countdown + expiry timestamp of each available reset credit.
+            for (index, credit) in inventory.credits.enumerated() {
+                guard let expiresAt = credit.expiresAt else { continue }
+                lines.append(self.labelValueLine(
+                    "Reset \(index + 1)",
+                    value: self.resetCreditExpiryString(expiresAt, now: now),
+                    useColor: useColor))
+            }
         }
-        if provider == .codex, let credits {
-            let remaining = credits.codexCreditLimit?.remaining ?? credits.remaining
-            lines.append(self.labelValueLine(
-                "Credits",
-                value: UsageFormatter.creditsString(from: remaining),
-                useColor: useColor))
-        }
+        // Fork: hide the Codex "Credits" line on cards by default.
+        // (Previously: `if provider == .codex, let credits { ... }` appended a Credits line.)
+        _ = credits
         for note in notes {
             let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
@@ -790,6 +834,21 @@ enum CLIRenderer {
         metadata: ProviderMetadata,
         snapshot: UsageSnapshot) -> RateWindowLabels
     {
+        // Fork: Token-Tracker-style window labels for Claude and z.ai.
+        if provider == .claude {
+            return RateWindowLabels(
+                primary: "5h",
+                secondary: metadata.weeklyLabel,
+                tertiary: metadata.opusLabel ?? "Sonnet",
+                showsTertiary: metadata.supportsOpus)
+        }
+        if provider == .zai {
+            return RateWindowLabels(
+                primary: "Weekly",
+                secondary: "Tools",
+                tertiary: "5h",
+                showsTertiary: true)
+        }
         if provider == .factory, snapshot.tertiary != nil {
             return RateWindowLabels(
                 primary: "5-hour",

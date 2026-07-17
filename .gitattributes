@@ -1,0 +1,2 @@
+# Fork: keep WSL shell scripts LF so they run directly under bash.
+Scripts/wsl/*.sh text eol=lf
