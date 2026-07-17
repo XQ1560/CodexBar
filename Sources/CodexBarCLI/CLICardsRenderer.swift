@@ -500,16 +500,28 @@ enum CLICardsRenderer {
         } else {
             rawLabel
         }
-        let value: String = if useColor, enhanced {
-            CLIRenderer.colorizeEnhancedGood(rawValue)
-        } else if useColor {
-            CLIRenderer.colorizeAccent(rawValue)
-        } else {
-            rawValue
-        }
+        let value = Self.styledDetailValue(rawValue, useColor: useColor, enhanced: enhanced)
         let gap = max(1, innerWidth - Self.visibleLength(label) - Self.visibleLength(value))
         let line = label + String(repeating: " ", count: gap) + value
         return Self.sideBorder(line, innerWidth: innerWidth, useColor: useColor, enhanced: enhanced)
+    }
+
+    /// Fork: for values like "in 9d 9h 44m, 07/27 08:02", render the countdown part in the
+    /// same subtle style as the metric reset lines; the timestamp keeps the value color.
+    private static func styledDetailValue(_ rawValue: String, useColor: Bool, enhanced: Bool) -> String {
+        guard useColor else { return rawValue }
+        if rawValue.hasPrefix("in "), let commaRange = rawValue.range(of: ", ") {
+            let countdown = String(rawValue[..<commaRange.upperBound])
+            let rest = String(rawValue[commaRange.upperBound...])
+            let styledCountdown = enhanced
+                ? CLIRenderer.colorizeEnhancedSubtle(countdown)
+                : CLIRenderer.colorizeSubtle(countdown)
+            let styledRest = enhanced
+                ? CLIRenderer.colorizeEnhancedGood(rest)
+                : CLIRenderer.colorizeAccent(rest)
+            return styledCountdown + styledRest
+        }
+        return enhanced ? CLIRenderer.colorizeEnhancedGood(rawValue) : CLIRenderer.colorizeAccent(rawValue)
     }
 
     private static func contentLine(

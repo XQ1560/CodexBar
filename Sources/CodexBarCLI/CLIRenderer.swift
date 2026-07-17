@@ -557,9 +557,14 @@ enum CLIRenderer {
         now: Date) -> CLICardMetric
     {
         let detailBacked = self.usesDetailBackedWindow(provider: provider)
-        let reset = detailBacked
+        var reset = detailBacked
             ? self.resetLineForDetailBackedWindow(window: window, style: resetStyle, now: now)
             : self.resetLine(for: window, style: resetStyle, now: now)
+        // Fork: z.ai window labels ("5 hours window") are not reset info; only show a
+        // real "Resets in ..." countdown when a concrete reset date exists.
+        if provider == .zai, window.resetsAt == nil {
+            reset = nil
+        }
         let detailText = detailBacked ? self.detailLineForDetailBackedWindow(window: window) : nil
         return CLICardMetric(
             label: label,
