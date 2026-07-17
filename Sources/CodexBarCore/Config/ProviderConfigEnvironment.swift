@@ -51,7 +51,8 @@ public enum ProviderConfigEnvironment {
             return true
         }
         switch provider {
-        case .copilot, .warp, .codebuff, .crof, .doubao:
+        // Fork: .deepseek — config API key maps to DEEPSEEK_API_KEY via applyDeepSeekOverrides.
+        case .copilot, .warp, .codebuff, .crof, .doubao, .deepseek:
             return true
         case .azureopenai:
             return true
@@ -117,6 +118,10 @@ public enum ProviderConfigEnvironment {
         config: ProviderConfig?) -> [String: String]
     {
         var env = base
+        // Fork: allow a config-stored DeepSeek API key (maps to DEEPSEEK_API_KEY).
+        if let apiKey = config?.sanitizedAPIKey, !apiKey.isEmpty {
+            env[DeepSeekSettingsReader.apiKeyEnvironmentKey] = apiKey
+        }
         if let platformToken = config?.sanitizedCookieHeader {
             env[DeepSeekSettingsReader.platformTokenEnvironmentKey] = platformToken
         }
