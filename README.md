@@ -89,8 +89,6 @@ token 消耗按天累积写入 `~/.config/codexbar/token-usage.sqlite3`(遵循 `
 
 `codexbar` 需在 PATH 中(如 `ln -s /mnt/d/CodexBar/bin/codexbar ~/.local/bin/codexbar`)。
 
-> 旧版 `~/.bashrc` 里的 `cardswatch` 循环函数已被 `--watch` 取代,可从 `~/.bashrc` 移除。
-
 ### Fork 改动（相对上游）
 
 卡片渲染改动位于 `Sources/CodexBarCLI/CLIRenderer.swift`,均带 `// Fork:` 注释,便于合并上游:
