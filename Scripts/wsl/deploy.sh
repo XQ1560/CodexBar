@@ -44,11 +44,11 @@ mkdir -p "${APP_DIR}"
 install -m 0755 "${BIN_PATH}" "${APP_DIR}/CodexBarCLI"
 printf '%s-fork\n' "${VERSION}" > "${APP_DIR}/VERSION"
 
-# 4. Point the launcher at the freshly deployed build.
+# 4. Install/update the launcher from the repo (it auto-resolves the latest version).
 LAUNCHER="${RUNTIME_ROOT}/bin/codexbar"
-if [[ -f "${LAUNCHER}" ]]; then
-    sed -i -E "s|^exec \"\\\$\{CODEXBAR_ROOT\}/app/[^/]+/CodexBarCLI\"|exec \"\${CODEXBAR_ROOT}/app/v${VERSION}-fork/CodexBarCLI\"|" "${LAUNCHER}"
-fi
+LAUNCHER_SRC="${REPO_ROOT}/Scripts/wsl/codexbar.launcher.sh"
+mkdir -p "${RUNTIME_ROOT}/bin"
+install -m 0755 "${LAUNCHER_SRC}" "${LAUNCHER}"
 
 echo "Deployed ${APP_DIR}/CodexBarCLI"
 "${LAUNCHER}" --version
