@@ -508,6 +508,19 @@ enum CostUsagePricing {
             trimmed.removeSubrange(vRange)
         }
 
+        // Fork: Anthropic's newer model ids use a hyphen between the version major and minor
+        // (e.g. `claude-opus-4-8`, `claude-haiku-4-5`). Display them with a dot so the
+        // version reads naturally (`claude-opus-4.8`). We match the full `claude-{family}-
+        // {major}-{minor}(-{8-digit date})?` shape and rewrite only the version separator,
+        // dropping the date suffix (display never needs it). Applied before the dated-suffix
+        // lookup below so the base is already in display form.
+        if let m = trimmed.firstMatch(of: #/^(claude-[a-z]+)-([0-9]+)-([0-9]+)(-[0-9]{8})?$/#) {
+            let prefix = String(m.1)
+            let major = String(m.2)
+            let minor = String(m.3)
+            return "\(prefix)-\(major).\(minor)"
+        }
+
         if let baseRange = trimmed.range(of: #"-\d{8}$"#, options: .regularExpression) {
             let base = String(trimmed[..<baseRange.lowerBound])
             if self.claude[base] != nil {
@@ -712,9 +725,16 @@ enum CostUsagePricing {
             cacheCreation1h: cacheCreationInputTokens1h,
             output: outputTokens)
         let key = self.normalizeClaudeModel(model)
+        // Fork: normalizeClaudeModel now writes the version separator as a dot for display
+        // (claude-opus-4.8), but the pricing table still keys on the hyphen form. Fall back
+        // to the hyphen key so display-name normalization doesn't break price lookups.
+        let pricingKey = self.claude[key] != nil
+            ? key
+            : (self.claude[key.replacingOccurrences(of: ".", with: "-")] != nil
+                ? key.replacingOccurrences(of: ".", with: "-") : key)
         if let pricingDate,
-           let historicalPricing = self.claudeHistoricalLongContext[key],
-           let currentPricing = self.claude[key]
+           let historicalPricing = self.claudeHistoricalLongContext[pricingKey],
+           let currentPricing = self.claude[pricingKey]
         {
             return self.claudeCostUSD(
                 pricing: pricingDate < self.claudeFullContextStandardPricingCutoff
@@ -733,7 +753,7 @@ enum CostUsagePricing {
                 tokens: tokens)
         }
 
-        guard let pricing = self.claude[key] else { return nil }
+        guard let pricing = self.claude[pricingKey] else { return nil }
         return self.claudeCostUSD(
             pricing: pricing,
             tokens: tokens)

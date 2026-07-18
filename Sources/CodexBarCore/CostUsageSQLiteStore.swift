@@ -289,6 +289,91 @@ public struct CostUsageSQLiteStore: Sendable {
               PRIMARY KEY (provider, day, model))
             """)
         try self.exec(db, "PRAGMA user_version = 1")
+        // Fork: re-normalize legacy Claude model names so the version separator reads as a
+        // dot (claude-opus-4-8 → claude-opus-4.8). The normalization rule changed after
+        // some rows were already written; this migration merges the legacy rows into the
+        // canonical names so the breakdown table doesn't show duplicates.
+        try self.migrateLegacyClaudeModelNames(db: db)
+    }
+
+    /// Updates legacy `claude-{family}-{major}-{minor}` model rows to the dotted form
+    /// (`claude-{family}-{major}.{minor}`), merging them into any existing canonical rows.
+    private func migrateLegacyClaudeModelNames(db: OpaquePointer?) throws {
+        // Pull the legacy model rows so we can re-key them (sqlite UPDATE can't change the
+        // primary key in place when the target row already exists, so we sum-then-delete).
+        let sql = """
+            SELECT provider, day, model, input_tokens, output_tokens,
+                   cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd
+            FROM daily_model_usage
+            WHERE provider = 'claude' AND model LIKE 'claude-%' AND model GLOB '*-[0-9]-[0-9]'
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+
+        var legacy: [(provider: String, day: String, model: String,
+            input: Int, output: Int, cacheRead: Int, cacheWrite: Int, total: Int, cost: Double)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            legacy.append((
+                provider: Self.columnText(stmt, 0),
+                day: Self.columnText(stmt, 1),
+                model: Self.columnText(stmt, 2),
+                input: Int(sqlite3_column_int64(stmt, 3)),
+                output: Int(sqlite3_column_int64(stmt, 4)),
+                cacheRead: Int(sqlite3_column_int64(stmt, 5)),
+                cacheWrite: Int(sqlite3_column_int64(stmt, 6)),
+                total: Int(sqlite3_column_int64(stmt, 7)),
+                cost: sqlite3_column_double(stmt, 8)))
+        }
+        guard !legacy.isEmpty else { return }
+
+        try self.exec(db, "BEGIN IMMEDIATE")
+        do {
+            for row in legacy {
+                let normalized = CostUsagePricing.normalizeClaudeModel(row.model)
+                guard normalized != row.model else { continue }
+                // Sum into the canonical row (INSERT ... ON CONFLICT adds to the existing one).
+                let mergeSQL = """
+                    INSERT INTO daily_model_usage
+                      (provider, day, model, input_tokens, output_tokens,
+                       cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(provider, day, model) DO UPDATE SET
+                      input_tokens = daily_model_usage.input_tokens + excluded.input_tokens,
+                      output_tokens = daily_model_usage.output_tokens + excluded.output_tokens,
+                      cache_read_tokens = daily_model_usage.cache_read_tokens + excluded.cache_read_tokens,
+                      cache_creation_tokens = daily_model_usage.cache_creation_tokens + excluded.cache_creation_tokens,
+                      total_tokens = daily_model_usage.total_tokens + excluded.total_tokens,
+                      cost_usd = daily_model_usage.cost_usd + excluded.cost_usd
+                    """
+                var merge: OpaquePointer?
+                guard sqlite3_prepare_v2(db, mergeSQL, -1, &merge, nil) == SQLITE_OK else {
+                    throw CostUsageSQLiteStoreError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+                }
+                defer { sqlite3_finalize(merge) }
+                sqlite3_bind_text(merge, 1, row.provider, -1, Self.transient)
+                sqlite3_bind_text(merge, 2, row.day, -1, Self.transient)
+                sqlite3_bind_text(merge, 3, normalized, -1, Self.transient)
+                sqlite3_bind_int64(merge, 4, Int64(row.input))
+                sqlite3_bind_int64(merge, 5, Int64(row.output))
+                sqlite3_bind_int64(merge, 6, Int64(row.cacheRead))
+                sqlite3_bind_int64(merge, 7, Int64(row.cacheWrite))
+                sqlite3_bind_int64(merge, 8, Int64(row.total))
+                sqlite3_bind_double(merge, 9, row.cost)
+                guard sqlite3_step(merge) == SQLITE_DONE else {
+                    throw CostUsageSQLiteStoreError.sqlFailed(String(cString: sqlite3_errmsg(db)))
+                }
+            }
+            // Drop the legacy rows now that they've been merged into the canonical names.
+            try self.exec(db, """
+                DELETE FROM daily_model_usage
+                WHERE provider = 'claude' AND model LIKE 'claude-%' AND model GLOB '*-[0-9]-[0-9]'
+                """)
+            try self.exec(db, "COMMIT")
+        } catch {
+            try? self.exec(db, "ROLLBACK")
+            throw error
+        }
     }
 
     private func exec(_ db: OpaquePointer?, _ sql: String) throws {

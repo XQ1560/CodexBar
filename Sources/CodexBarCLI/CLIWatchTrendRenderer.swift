@@ -762,12 +762,23 @@ enum CLIWatchTrendRenderer {
         enhanced: Bool) -> String
     {
         let parts = [
-            name,
+            Self.displayName(forModel: name),
             "\(UsageFormatter.tokenCountString(model.totalTokens)) tok",
             "$\(String(format: "%.2f", model.costUSD))",
             model.requestCount > 0 ? "\(model.requestCount) req" : "",
         ].filter { !$0.isEmpty }
         return Self.subtle(parts.joined(separator: " · "), useColor: useColor, enhanced: enhanced)
+    }
+
+    /// Fork: display-only model-name normalization for the watch breakdown table. Maps the
+    /// upstream "unknown" placeholder (Codex turns with no recorded model) to a clearer
+    /// label so users don't see a bare "unknown" row. Does not touch pricing or storage.
+    static func displayName(forModel name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "unknown" || trimmed == "Unknown" {
+            return "(unspecified)"
+        }
+        return trimmed
     }
 
     /// One-glyph color swatch for a provider, rendered in its palette color.
