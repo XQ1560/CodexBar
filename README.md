@@ -77,11 +77,17 @@ codexbar cards --watch --month 30            # month 视图显示最近 30 天(�
 
 再次按同一视图键(`w`/`m`/`h`)切回卡片视图。一次完整抓取约 30–50 秒,**倒计时从抓取完成起算**;`--interval` 最小 60 秒,低于则报错退出。原生 TTY 下 truecolor 自动生效,不再需要旧的 `script -qec` pty 包装。
 
+**tmux 下真彩修复**:在 tmux 里运行 watch 时,tmux 默认不认为 `TERM=xterm-256color` 的外层终端(如 WezTerm)支持真彩——该 terminfo 没有 RGB 能力位,实测 `COLORTERM=truecolor` 也不会让 tmux 3.4 自动启用——于是所有 truecolor(`38;2;r;g;b`)在输出给客户端时被降采样成 256 色调色板(如 teal `38;2;90;220;200` → `38;5;80`),柱状渐变出现色带分段、热力图颜色跑偏。修复:在 WSL 的 `~/.tmux.conf` 加一行,然后重启 tmux server(`tmux kill-server` 后重开):
+
+```tmux
+set -as terminal-features ",xterm-256color:RGB"
+```
+
+验证:tmux 内执行 `tmux display -p '#{client_termfeatures}'`,输出应包含 `RGB`;此后 tmux 内外的 watch 配色完全一致。
+
 token 消耗按天累积写入 `~/.config/codexbar/token-usage.sqlite3`(遵循 `XDG_CONFIG_HOME`)。由于本地会话日志通常只保留约 30 天,该 SQLite 库让趋势与热力图可以增长到超过日志窗口的历史范围,并为后续统计特性留出数据基础。`codexbar cost` 每次运行也会顺带写库。
 
 `codexbar` 需在 PATH 中(如 `ln -s /mnt/d/CodexBar/bin/codexbar ~/.local/bin/codexbar`)。
-
-> 旧版 `~/.bashrc` 里的 `cardswatch` 循环函数已被 `--watch` 取代,可从 `~/.bashrc` 移除。
 
 ### Fork 改动（相对上游）
 
@@ -99,7 +105,7 @@ token 消耗按天累积写入 `~/.config/codexbar/token-usage.sqlite3`(遵循 `
 - `Sources/CodexBarCLI/CLIWatchTerminal.swift` — raw mode / alternate screen / 终端恢复。
 - `Sources/CodexBarCLI/CLIWatchInput.swift` — 键盘线程、tick、SIGWINCH。
 - `Sources/CodexBarCLI/CLIWatchState.swift` — 视图状态机、键位映射、状态栏(纯逻辑)。
-- `Sources/CodexBarCLI/CLIWatchTrendRenderer.swift` — 周柱状图、月视图、GitHub 风格热力图、帮助浮层。
+- `Sources/CodexBarCLI/CLIWatchTrendRenderer.swift` — 周柱状图、月视图、GitHub 风格热力图、帮助浮层;三个子视图与 card 模式共用同一视觉体系(圆角全宽卡片容器、紫标题 + 蓝 badge + 金色 TOTAL 头部、card 色系 provider 柱状渐变、teal 热力 ramp、today 紫色高亮)。
 - `Sources/CodexBarCore/CostUsageTrendBuckets.swift` — 自然周/滚动 N 天/热力图周网格/堆叠分桶。
 - `Sources/CodexBarCore/CostUsageSQLiteStore.swift` — token 用量 SQLite 持久化。
 - `Sources/CodexBarCore/ZCodeLocalUsageScanner.swift` — 读取 ZCode (`~/.zcode/cli/agents`) transcript,按 turnId 关联 model + token 用量。

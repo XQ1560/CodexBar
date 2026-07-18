@@ -225,7 +225,8 @@ struct CLIWatchTrendRendererTests {
             title: "Claude · this week", slots: stacked, totals: totals,
             height: 6, width: 120, useColor: false, enhanced: false)
         let joined = lines.joined(separator: "\n")
-        #expect(joined.contains("Claude · this week · 500 tokens")) // total in title
+        #expect(joined.contains("Claude · this week")) // title in the header
+        #expect(joined.contains("TOTAL 500 tokens")) // period total right-aligned in the header
         #expect(joined.contains("in 180"))
         #expect(joined.contains("out 90"))
         #expect(joined.contains("cache-hit 230"))
@@ -428,12 +429,12 @@ struct CLIWatchTrendRendererTests {
     }
 
     @Test
-    func `heatmap ramp runs from dark green to bright mocha green`() {
-        let bottom = CLIWatchTrendRenderer.heatGreenRGB(level: 1)
-        let top = CLIWatchTrendRenderer.heatGreenRGB(level: 4)
-        // Level 1 = dark green-gray #475951; level 4 = bright Mocha green #a6e3a1.
-        #expect(bottom.r == 71 && bottom.g == 89 && bottom.b == 81)
-        #expect(top.r == 166 && top.g == 227 && top.b == 161)
+    func `heatmap ramp runs from dark teal to the card bar's light teal`() {
+        let bottom = CLIWatchTrendRenderer.heatRampRGB(level: 1)
+        let top = CLIWatchTrendRenderer.heatRampRGB(level: 4)
+        // Level 1 = dark teal; level 4 = the card progress-bar gradient's light end.
+        #expect(bottom.r == 30 && bottom.g == 90 && bottom.b == 84)
+        #expect(top.r == 90 && top.g == 220 && top.b == 200)
     }
 
     @Test

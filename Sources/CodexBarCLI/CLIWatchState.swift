@@ -214,4 +214,35 @@ enum CLIWatchText {
         guard current < width else { return text }
         return text + String(repeating: " ", count: width - current)
     }
+
+    /// Truncates `text` to at most `width` visible columns, preserving escape sequences
+    /// and appending a reset so an open color never bleeds past the cut.
+    static func truncateVisible(_ text: String, to width: Int) -> String {
+        guard self.visibleWidth(text) > width else { return text }
+        var result = ""
+        var visible = 0
+        var state: WidthScanState = .plain
+        var sawEscape = false
+        for scalar in text.unicodeScalars {
+            switch state {
+            case .plain:
+                if scalar.value == 0x1B {
+                    state = .escape
+                    sawEscape = true
+                    result.unicodeScalars.append(scalar)
+                } else {
+                    if visible >= width { continue }
+                    visible += 1
+                    result.unicodeScalars.append(scalar)
+                }
+            case .escape:
+                state = scalar.value == 0x5B ? .csi : .plain
+                result.unicodeScalars.append(scalar)
+            case .csi:
+                if (0x40...0x7E).contains(scalar.value) { state = .plain }
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        return sawEscape ? result + "\u{001B}[0m" : result
+    }
 }

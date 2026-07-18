@@ -6,15 +6,19 @@ import Foundation
 
 enum CLIWatchTrendRenderer {
     static let partialBlocks: [Character] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-    // Fork: empty heatmap cell = Catppuccin Mocha surface0 (#313244), matching the
-    // token-tracker heatmap so empty days read as a calm dark grid, not a flat void.
-    static let emptyCellRGB = (r: 49, g: 50, b: 68)
+    // Fork: empty heatmap cell — a navy one step lighter than the terminal background so
+    // the grid stays visible without competing with filled cells (card theme family).
+    static let emptyCellRGB = (r: 29, g: 35, b: 54)
 
     // Teal gradient shared with the card bars (bottom dark → top light).
     static let barDarkRGB = (r: 40, g: 150, b: 140)
     static let barLightRGB = (r: 90, g: 220, b: 200)
 
     static let heatNoColorGlyph: [Character] = ["·", "░", "▒", "▓", "█"]
+
+    /// Fork: minimum terminal width for the full-width card frame around trend views.
+    /// Below this the views render unframed so tiny terminals keep every column.
+    static let frameMinWidth = 40
 
     // MARK: - Weekly grouped bar chart
 
@@ -24,6 +28,7 @@ enum CLIWatchTrendRenderer {
     /// so bar height always reflects the true token volume across providers.
     static func renderWeek(
         title: String,
+        badge: String = "",
         slots: [CostUsageStackedDaySlot],
         totals: [CostUsageStackedProviderTotals],
         height: Int,
@@ -31,6 +36,8 @@ enum CLIWatchTrendRenderer {
         useColor: Bool,
         enhanced: Bool) -> [String]
     {
+        let framed = width >= Self.frameMinWidth
+        let contentWidth = framed ? width - 4 : width
         let barHeight = max(3, min(height, 12))
         let providers = totals.map(\.provider)
         let palette = Self.providerPalette(for: providers)
@@ -38,10 +45,13 @@ enum CLIWatchTrendRenderer {
         // Fork: fill the terminal width — bars within a day touch, the leftover width
         // grows the day gap so labels (date/total) get room and the chart spans the row.
         let layout = Self.groupedBarLayoutFilling(
-            providerCount: providers.count, dayCount: slots.count, width: width)
+            providerCount: providers.count, dayCount: slots.count, width: contentWidth)
 
         let grandTotals = CostUsageTokenTotals.from(slots: slots.map(\.asDaySlot))
-        var lines: [String] = [Self.titleWithTotal(title, totals: grandTotals, useColor: useColor, enhanced: enhanced)]
+        var lines: [String] = [Self.headerLine(
+            title: title, badge: badge, totals: grandTotals,
+            contentWidth: contentWidth, useColor: useColor, enhanced: enhanced)]
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
         lines.append(contentsOf: Self.renderBandRows(
             slots: slots, providers: providers, maxValue: maxValue, palette: palette,
             height: barHeight, layout: layout, useColor: useColor, enhanced: enhanced,
@@ -49,7 +59,9 @@ enum CLIWatchTrendRenderer {
                 let weekdaySymbols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
                 return weekdaySymbols[index % 7]
             }))
-        lines.append("")
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
+        lines.append(contentsOf: Self.providerLegend(
+            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
         lines.append(Self.statsLine(grandTotals, useColor: useColor, enhanced: enhanced))
         let peak = slots.max { $0.grandTotal < $1.grandTotal }
         if let peak, peak.grandTotal > 0 {
@@ -58,11 +70,12 @@ enum CLIWatchTrendRenderer {
                     + "(\(UsageFormatter.tokenCountString(peak.grandTotal)))",
                 useColor: useColor, enhanced: enhanced))
         }
-        lines.append(contentsOf: Self.providerLegend(
-            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
         lines.append(contentsOf: Self.modelBreakdownTable(
-            totals: totals, useColor: useColor, enhanced: enhanced))
-        return lines
+            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
+        return framed
+            ? Self.cardFrame(lines, width: width, useColor: useColor, enhanced: enhanced)
+            : lines
     }
 
     // MARK: - 30-day grouped bars
@@ -74,6 +87,7 @@ enum CLIWatchTrendRenderer {
     /// view. `topLabel` is the per-day header (date for this view).
     static func renderThirtyDays(
         title: String,
+        badge: String = "",
         slots: [CostUsageStackedDaySlot],
         totals: [CostUsageStackedProviderTotals],
         width: Int,
@@ -81,6 +95,8 @@ enum CLIWatchTrendRenderer {
         useColor: Bool,
         enhanced: Bool) -> [String]
     {
+        let framed = width >= Self.frameMinWidth
+        let contentWidth = framed ? width - 4 : width
         let providers = totals.map(\.provider)
         let palette = Self.providerPalette(for: providers)
         let maxValue = Self.globalMax(slots: slots)
@@ -88,19 +104,22 @@ enum CLIWatchTrendRenderer {
         let baseLayout = Self.groupedBarLayout(providerCount: providers.count, compactDayGap: false)
 
         let grandTotals = CostUsageTokenTotals.from(slots: slots.map(\.asDaySlot))
-        var lines: [String] = [Self.titleWithTotal(title, totals: grandTotals, useColor: useColor, enhanced: enhanced)]
+        var lines: [String] = [Self.headerLine(
+            title: title, badge: badge, totals: grandTotals,
+            contentWidth: contentWidth, useColor: useColor, enhanced: enhanced)]
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
 
         // Fork: split into bands using the minimum dayWidth, then fill each band's width by
         // growing its day gap. This keeps every band identical to the week view while
         // making the chart span the terminal and giving labels room.
-        let daysPerBand = Self.daysPerBand(dayWidth: baseLayout.dayWidth, width: width, dayCount: slots.count)
+        let daysPerBand = Self.daysPerBand(dayWidth: baseLayout.dayWidth, width: contentWidth, dayCount: slots.count)
         var startIndex = 0
         var bandIndex = 0
         while startIndex < slots.count {
             let endIndex = min(startIndex + daysPerBand, slots.count)
             let bandSlots = Array(slots[startIndex..<endIndex])
             let bandLayout = Self.groupedBarLayoutFilling(
-                providerCount: providers.count, dayCount: bandSlots.count, width: width)
+                providerCount: providers.count, dayCount: bandSlots.count, width: contentWidth)
             if bandIndex > 0 { lines.append("") }
             lines.append(contentsOf: Self.renderBandRows(
                 slots: bandSlots, providers: providers, maxValue: maxValue, palette: palette,
@@ -110,7 +129,9 @@ enum CLIWatchTrendRenderer {
             bandIndex += 1
         }
 
-        lines.append("")
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
+        lines.append(contentsOf: Self.providerLegend(
+            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
         lines.append(Self.statsLine(grandTotals, useColor: useColor, enhanced: enhanced))
         let peak = slots.max { $0.grandTotal < $1.grandTotal }
         if let peak, peak.grandTotal > 0 {
@@ -119,11 +140,12 @@ enum CLIWatchTrendRenderer {
                     + "(\(UsageFormatter.tokenCountString(peak.grandTotal)))",
                 useColor: useColor, enhanced: enhanced))
         }
-        lines.append(contentsOf: Self.providerLegend(
-            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
         lines.append(contentsOf: Self.modelBreakdownTable(
-            totals: totals, useColor: useColor, enhanced: enhanced))
-        return lines
+            totals: totals, palette: palette, useColor: useColor, enhanced: enhanced))
+        return framed
+            ? Self.cardFrame(lines, width: width, useColor: useColor, enhanced: enhanced)
+            : lines
     }
 
     /// Fork: days per band for the wrapped 15-day view. Prefers one band (all days) when
@@ -195,21 +217,30 @@ enum CLIWatchTrendRenderer {
     /// instead of dropping older weeks.
     static func renderHeatmap(
         title: String,
+        badge: String = "",
+        providersLabel: String = "",
         grid: [[CostUsageDaySlot]],
         width: Int,
         useColor: Bool,
         enhanced: Bool) -> [String]
     {
-        let leftMargin = 4
+        let framed = width >= Self.frameMinWidth
+        let contentWidth = framed ? width - 4 : width
+        // 2-column indent (matching every other section) + 4-column weekday label margin.
+        let indent = framed ? "  " : ""
+        let leftMargin = 4 + indent.count
         let cellWidth = 2
-        let columnsPerBand = max(1, (width - leftMargin) / cellWidth)
+        let columnsPerBand = max(1, (contentWidth - leftMargin) / cellWidth)
 
         // Colour thresholds come from the whole grid so bands stay consistent.
         let allTokens = grid.flatMap { $0.compactMap(\.totalTokens) }
         let thresholds = Self.quantileThresholds(allTokens)
         let totals = CostUsageTokenTotals.from(slots: grid.flatMap { $0 })
 
-        var lines: [String] = [Self.titleWithTotal(title, totals: totals, useColor: useColor, enhanced: enhanced)]
+        var lines: [String] = [Self.headerLine(
+            title: title, badge: badge, totals: totals,
+            contentWidth: contentWidth, useColor: useColor, enhanced: enhanced)]
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
 
         let rowLabels = ["Mon", "   ", "Wed", "   ", "Fri", "   ", "Sun"]
         var start = 0
@@ -221,7 +252,7 @@ enum CLIWatchTrendRenderer {
             lines.append(Self.monthHeader(columns: band, leftMargin: leftMargin, cellWidth: cellWidth,
                                           useColor: useColor, enhanced: enhanced))
             for row in 0..<7 {
-                var line = Self.subtle(rowLabels[row], useColor: useColor, enhanced: enhanced) + " "
+                var line = indent + Self.subtle(rowLabels[row], useColor: useColor, enhanced: enhanced) + " "
                 for column in band {
                     line += Self.heatCell(slot: column[row], thresholds: thresholds,
                                           useColor: useColor, enhanced: enhanced)
@@ -232,9 +263,9 @@ enum CLIWatchTrendRenderer {
         }
 
         // Legend + breakdown + peak.
-        lines.append("")
+        lines.append(Self.separatorLine(contentWidth: contentWidth, useColor: useColor, enhanced: enhanced))
         lines.append(Self.heatLegend(useColor: useColor, enhanced: enhanced))
-        lines.append(Self.statsLine(totals, useColor: useColor, enhanced: enhanced))
+        lines.append(Self.statsLine(totals, prefix: providersLabel, useColor: useColor, enhanced: enhanced))
         let peak = grid.flatMap { $0 }.max { ($0.totalTokens ?? 0) < ($1.totalTokens ?? 0) }
         if let peak, let peakTokens = peak.totalTokens, peakTokens > 0 {
             lines.append("  " + Self.subtle(
@@ -244,14 +275,17 @@ enum CLIWatchTrendRenderer {
         } else {
             lines.append("  " + Self.subtle("\(totals.activeDays) active days", useColor: useColor, enhanced: enhanced))
         }
-        return lines
+        return framed
+            ? Self.cardFrame(lines, width: width, useColor: useColor, enhanced: enhanced)
+            : lines
     }
 
     // MARK: - Help overlay
 
     static func helpOverlayLines(interval: Int) -> [String] {
+        // Rounded corners to match the card frame (card mode's ╭╮╰╯ vocabulary).
         [
-            "┌─ codexbar watch ──────────────────┐",
+            "╭─ codexbar watch ──────────────────╮",
             "│  (default)  cards view            │",
             "│  w          weekly token trend    │",
             "│  m          30-day token trend    │",
@@ -262,8 +296,66 @@ enum CLIWatchTrendRenderer {
             "│                                   │",
             "│  interval: \(Self.pad("\(interval)s", 4)) · fetch ~30-50s │",
             "│  press any key to close           │",
-            "└───────────────────────────────────┘",
+            "╰───────────────────────────────────╯",
         ]
+    }
+
+    // MARK: - Fork: unified card frame + header (card mode's visual language)
+
+    /// Wraps content lines in the card mode's rounded full-width frame. Lines longer than
+    /// the inner width are truncated (ANSI-aware) so the right border stays aligned.
+    static func cardFrame(_ content: [String], width: Int, useColor: Bool, enhanced: Bool) -> [String] {
+        let innerWidth = max(1, width - 4)
+        let horizontal = String(repeating: "─", count: max(0, width - 2))
+        let side = Self.borderText("│", useColor: useColor, enhanced: enhanced)
+        var lines = [Self.borderText("╭" + horizontal + "╮", useColor: useColor, enhanced: enhanced)]
+        for line in content {
+            let fitted = CLIWatchText.truncateVisible(line, to: innerWidth)
+            lines.append(side + " " + CLIWatchText.padVisible(fitted, to: innerWidth) + " " + side)
+        }
+        lines.append(Self.borderText("╰" + horizontal + "╯", useColor: useColor, enhanced: enhanced))
+        return lines
+    }
+
+    /// Card-style view header: bold accent title + badge pill on the left, gold period
+    /// total right-aligned — the trend-view analogue of the provider card's header row.
+    static func headerLine(
+        title: String, badge: String, totals: CostUsageTokenTotals,
+        contentWidth: Int, useColor: Bool, enhanced: Bool) -> String
+    {
+        var left = "  " + Self.styledTitle(title, useColor: useColor, enhanced: enhanced)
+        if !badge.isEmpty {
+            left += " " + Self.badgeText(badge, useColor: useColor, enhanced: enhanced)
+        }
+        guard totals.totalTokens > 0 else { return left }
+        let tokens = UsageFormatter.tokenCountString(totals.totalTokens)
+        let right = Self.subtle("TOTAL ", useColor: useColor, enhanced: enhanced)
+            + Self.gold(tokens, useColor: useColor, enhanced: enhanced)
+            + Self.subtle(" tokens", useColor: useColor, enhanced: enhanced)
+        let gap = contentWidth - 2 - CLIWatchText.visibleWidth(left) - CLIWatchText.visibleWidth(right)
+        guard gap >= 1 else { return left + " " + right }
+        return left + String(repeating: " ", count: gap) + right
+    }
+
+    /// Full-width `─` rule inside the card, matching the card mode's section separator.
+    static func separatorLine(contentWidth: Int, useColor: Bool, enhanced: Bool) -> String {
+        "  " + Self.borderText(String(repeating: "─", count: max(1, contentWidth - 4)),
+                               useColor: useColor, enhanced: enhanced)
+    }
+
+    private static func borderText(_ text: String, useColor: Bool, enhanced: Bool) -> String {
+        guard useColor else { return text }
+        return enhanced ? CLIRenderer.colorizeEnhancedBorder(text) : CLIRenderer.colorizeCardBorder(text)
+    }
+
+    private static func badgeText(_ badge: String, useColor: Bool, enhanced: Bool) -> String {
+        guard useColor else { return "[\(badge)]" }
+        return enhanced ? CLIRenderer.colorizeEnhancedBadge(badge) : CLIRenderer.colorizeCardBadge(badge)
+    }
+
+    private static func gold(_ text: String, useColor: Bool, enhanced: Bool) -> String {
+        guard useColor else { return text }
+        return enhanced ? CLIRenderer.colorizeEnhancedPlanValue(text) : CLIRenderer.colorizeWarning(text)
     }
 
     // MARK: - Bars & glyphs
@@ -298,22 +390,24 @@ enum CLIWatchTrendRenderer {
 
     // MARK: - Fork: stacked bars + provider palette
 
-    /// Distinct, color-blind-aware palette. Index by provider order so the same provider
-    /// keeps its color across frames. Returns nil for providers beyond the palette range
-    /// (renderer falls back to gray).
+    /// Fork: unified provider palette derived from the card enhanced theme. The first
+    /// slots reuse the card's own hues (healthy-bar teal, badge blue, plan gold, the
+    /// <10% rose and <50% orange warning tones); the rest are same-family derivatives.
+    /// Purple is deliberately absent — it stays reserved for the today highlight.
+    /// Index by provider order so the same provider keeps its color across frames.
     static let providerPaletteRGB: [(r: Int, g: Int, b: Int)] = [
-        (97, 175, 254),   // sky blue   (Claude)
-        (152, 195, 121),  // sage green (Codex)
-        (229, 192, 123),  // gold       (Cursor)
-        (224, 108, 117),  // rose       (Gemini)
-        (198, 120, 221),  // lilac      (Copilot)
-        (86, 182, 194),   // teal       (Vertex AI)
-        (224, 175, 208),  // pink       (Bedrock)
+        (90, 220, 200),   // teal       (= card healthy-bar light end)
+        (111, 168, 245),  // blue       (badge-blue family)
+        (238, 184, 92),   // gold       (= card PLAN value)
+        (255, 95, 95),    // rose       (= card <10% light end)
+        (255, 190, 90),   // orange     (= card <50% light end)
+        (150, 230, 180),  // seafoam    (teal derivative)
+        (170, 190, 250),  // periwinkle (blue derivative)
+        (230, 205, 150),  // sand       (gold derivative)
+        (250, 150, 150),  // blush      (rose derivative)
+        (140, 200, 230),  // sky        (teal/blue derivative)
         (216, 162, 92),   // bronze
-        (143, 219, 167),  // mint
-        (232, 165, 138),  // peach
-        (162, 196, 240),  // periwinkle
-        (204, 173, 237),  // lavender
+        (150, 175, 205),  // slate
     ]
 
     /// Fallback color when a provider has no palette slot.
@@ -450,6 +544,7 @@ enum CLIWatchTrendRenderer {
             return Array(repeating: " ", count: height)
         }
         let eighths = Self.eighths(forValue: value, max: maxValue, height: height)
+        let filledRows = Swift.max(1, Swift.min(height, (eighths + 7) / 8))
         return (0..<height).map { rowFromTop in
             let rowFromBottom = height - 1 - rowFromTop
             let cellStart = rowFromBottom * 8
@@ -461,13 +556,17 @@ enum CLIWatchTrendRenderer {
             } else {
                 fullness = 0
             }
+            // Vertical gradient over the filled extent (dark base → light tip), matching
+            // the card progress bars' gradient language.
+            let gradient = filledRows <= 1 ? 1.0 : Double(rowFromBottom) / Double(filledRows - 1)
             return Self.renderStackedCell(
                 provider: fullness > 0 ? provider : nil,
                 fullness: fullness,
                 isToday: isToday,
                 palette: palette,
                 useColor: useColor,
-                enhanced: enhanced)
+                enhanced: enhanced,
+                gradient: gradient)
         }
     }
 
@@ -509,25 +608,37 @@ enum CLIWatchTrendRenderer {
         return floor
     }
 
+    /// Today-highlight accent (the card theme's purple), shared by bars, labels, and cells.
+    static let todayAccentRGB = (r: 198, g: 146, b: 255)
+
+    /// Scales a palette color toward its dark end: `gradient` 0 (base) → 1 (tip).
+    /// Bottom rows sit at ~55% brightness so a tall bar reads like the card bars' gradient.
+    static func gradientRGB(_ rgb: (r: Int, g: Int, b: Int), gradient: Double) -> (r: Int, g: Int, b: Int) {
+        let t = Swift.max(0, Swift.min(1, gradient))
+        let scale = 0.55 + 0.45 * t
+        return (Int(Double(rgb.r) * scale), Int(Double(rgb.g) * scale), Int(Double(rgb.b) * scale))
+    }
+
     /// Renders one row of a stacked column. `fullness` 0...8 picks the glyph; `provider`
-    /// picks the color (nil = empty cell, plain space).
+    /// picks the color (nil = empty cell, plain space). `gradient` positions the row
+    /// within the bar's filled extent for the vertical dark→light gradient.
     static func renderStackedCell(
         provider: UsageProvider?,
         fullness: Int,
         isToday: Bool,
         palette: [UsageProvider: (r: Int, g: Int, b: Int)],
         useColor: Bool,
-        enhanced: Bool) -> String
+        enhanced: Bool,
+        gradient: Double = 1.0) -> String
     {
         guard fullness > 0, let provider else { return " " }
         let glyph = fullness >= 8 ? "█" : Self.partialBlocks[Swift.min(7, fullness - 1)]
         let text = String(glyph)
         guard useColor else { return text }
-        if isToday {
-            // Outline today's column in bold accent so it stands out regardless of provider.
-            return CLIRenderer.colorizeEnhancedAccentBold(text)
-        }
-        let rgb = palette[provider] ?? Self.providerFallbackRGB
+        // Today's column always renders in the accent purple so it stands out regardless
+        // of provider; it still carries the same vertical gradient as the provider bars.
+        let base = isToday ? Self.todayAccentRGB : (palette[provider] ?? Self.providerFallbackRGB)
+        let rgb = Self.gradientRGB(base, gradient: gradient)
         _ = enhanced // truecolor is used regardless of enhanced cards mode
         return CLIRenderer.ansiTrueColor(red: rgb.r, green: rgb.g, blue: rgb.b, text)
     }
@@ -592,37 +703,36 @@ enum CLIWatchTrendRenderer {
         guard useColor else {
             return "\(Self.heatNoColorGlyph[level]) "
         }
-        // Fork: ■ (U+25A0) square glyph + 1-space gap, matching the token-tracker heatmap
-        // — readable as discrete cells, and the green ramp below gives each level its
-        // own clearly distinguishable shade.
+        // Fork: ■ (U+25A0) square glyph + 1-space gap — readable as discrete cells, and
+        // the teal ramp below gives each level its own clearly distinguishable shade.
         let glyph = "■"
         if slot.isToday {
             return CLIRenderer.colorizeEnhancedAccentBold(glyph) + " "
         }
-        // Fork: Catppuccin Mocha green ramp (heatGreenRGB). Level 0 is surface0 — the
-        // same dark grid color the token-tracker heatmap uses for empty days.
+        // Level 0 is a navy one step lighter than the terminal background — the grid
+        // stays visible without competing with filled cells.
         if level == 0 {
             let c = Self.emptyCellRGB
             return CLIRenderer.ansiTrueColor(red: c.r, green: c.g, blue: c.b, glyph) + " "
         }
         guard enhanced else {
-            return "\u{001B}[32m\(glyph)\u{001B}[0m "
+            return "\u{001B}[36m\(glyph)\u{001B}[0m "
         }
-        let c = Self.heatGreenRGB(level: level)
+        let c = Self.heatRampRGB(level: level)
         return CLIRenderer.ansiTrueColor(red: c.r, green: c.g, blue: c.b, glyph) + " "
     }
 
-    /// Fork: Catppuccin Mocha green heatmap ramp, hand-tuned to match the token-tracker
-    /// daily heatmap. Five steps from surface0 (empty) to the Mocha green accent, with
-    /// the middle levels biased toward the dark end so low-activity days stay visibly
-    /// distinct from empty cells (a flat single-color ramp washes them out).
-    static func heatGreenRGB(level: Int) -> (r: Int, g: Int, b: Int) {
+    /// Fork: teal heatmap ramp derived from the card progress-bar gradient
+    /// (rgb(40,150,140) → rgb(90,220,200)), so the heatmap shares the cards' healthy-teal
+    /// identity. Four steps from dark teal to the card bar's light end, biased toward the
+    /// dark side so low-activity days stay visibly distinct from empty cells.
+    static func heatRampRGB(level: Int) -> (r: Int, g: Int, b: Int) {
         let clamped = Swift.max(1, Swift.min(4, level))
         let stops: [(r: Int, g: Int, b: Int)] = [
-            (71, 89, 81),    // 1 — dark green-gray   (#475951)
-            (98, 129, 104),  // 2 — muted green       (#628168)
-            (125, 168, 127), // 3 — mid green         (#7da87f)
-            (166, 227, 161), // 4 — bright green      (#a6e3a1, Mocha green)
+            (30, 90, 84),    // 1 — dark teal
+            (40, 150, 140),  // 2 — card bar gradient dark end
+            (60, 188, 170),  // 3 — mid teal
+            (90, 220, 200),  // 4 — card bar gradient light end
         ]
         return stops[clamped - 1]
     }
@@ -638,7 +748,15 @@ enum CLIWatchTrendRenderer {
         }
         let less = Self.subtle("Less ", useColor: useColor, enhanced: enhanced)
         let more = Self.subtle(" More", useColor: useColor, enhanced: enhanced)
-        return "  " + less + cells + more
+        let today = Self.todayChip(useColor: useColor, enhanced: enhanced)
+        return "  " + less + cells + more + "   " + today
+    }
+
+    /// Legend chip explaining the purple today highlight (swatch + label).
+    private static func todayChip(useColor: Bool, enhanced: Bool) -> String {
+        guard useColor else { return "■ today" }
+        _ = enhanced
+        return CLIRenderer.colorizeEnhancedAccentBold("■ today")
     }
 
     private static func monthHeader(
@@ -665,35 +783,33 @@ enum CLIWatchTrendRenderer {
 
     // MARK: - Text helpers
 
+    /// Bold accent title (card mode's title treatment).
     private static func styledTitle(_ title: String, useColor: Bool, enhanced: Bool) -> String {
-        guard useColor else { return "  " + title }
-        if enhanced { return "  " + CLIRenderer.colorizeEnhancedAccentBold(title) }
-        return "  \u{001B}[1m\(title)\u{001B}[0m"
+        guard useColor else { return title }
+        if enhanced { return CLIRenderer.colorizeEnhancedAccentBold(title) }
+        return CLIRenderer.colorizeAccentBold(title)
     }
 
-    /// Title with the period total appended so it stays visible even if the body is truncated.
-    private static func titleWithTotal(
-        _ title: String, totals: CostUsageTokenTotals, useColor: Bool, enhanced: Bool) -> String
+    /// Input / output / cache-hit token breakdown plus cost (cost in the card's gold).
+    private static func statsLine(
+        _ totals: CostUsageTokenTotals, prefix: String = "", useColor: Bool, enhanced: Bool) -> String
     {
-        let suffix = totals.totalTokens > 0 ? " · \(UsageFormatter.tokenCountString(totals.totalTokens)) tokens" : ""
-        return Self.styledTitle(title + suffix, useColor: useColor, enhanced: enhanced)
-    }
-
-    /// Input / output / cache-hit token breakdown plus cost.
-    private static func statsLine(_ totals: CostUsageTokenTotals, useColor: Bool, enhanced: Bool) -> String {
-        let parts = [
+        var parts = [
             "in \(UsageFormatter.tokenCountString(totals.inputTokens))",
             "out \(UsageFormatter.tokenCountString(totals.outputTokens))",
             "cache-hit \(UsageFormatter.tokenCountString(totals.cacheReadTokens))",
             "cache-write \(UsageFormatter.tokenCountString(totals.cacheCreationTokens))",
-            "$\(String(format: "%.2f", totals.costUSD))",
         ]
-        return "  " + Self.subtle(parts.joined(separator: " · "), useColor: useColor, enhanced: enhanced)
+        if !prefix.isEmpty { parts.insert(prefix, at: 0) }
+        let cost = "$\(String(format: "%.2f", totals.costUSD))"
+        return "  " + Self.subtle(parts.joined(separator: " · ") + " · ", useColor: useColor, enhanced: enhanced)
+            + Self.gold(cost, useColor: useColor, enhanced: enhanced)
     }
 
     // MARK: - Fork: legend + per-model breakdown table
 
-    /// Color swatch + provider name + window total, wrapped onto as many columns as fit.
+    /// Color swatch + provider name (in its bar color) + window total, plus a chip
+    /// explaining the purple today column — the trend analogue of the card badges.
     static func providerLegend(
         totals: [CostUsageStackedProviderTotals],
         palette: [UsageProvider: (r: Int, g: Int, b: Int)],
@@ -701,13 +817,31 @@ enum CLIWatchTrendRenderer {
         enhanced: Bool) -> [String]
     {
         guard !totals.isEmpty else { return [] }
-        let entries = totals.map { totals -> String in
+        var entries = totals.map { totals -> String in
             let name = ProviderDescriptorRegistry.descriptor(for: totals.provider).metadata.displayName
             let tokens = UsageFormatter.tokenCountString(totals.totalTokens)
             let swatch = Self.swatch(for: totals.provider, palette: palette, useColor: useColor, enhanced: enhanced)
-            return "\(swatch) \(name) \(tokens)"
+            let coloredName = Self.providerName(
+                name, provider: totals.provider, palette: palette, useColor: useColor, enhanced: enhanced)
+            return "\(swatch) \(coloredName) \(Self.subtle(tokens, useColor: useColor, enhanced: enhanced))"
         }
-        return [Self.subtle("  legend: " + entries.joined(separator: "  "), useColor: useColor, enhanced: enhanced)]
+        entries.append(Self.todayChip(useColor: useColor, enhanced: enhanced))
+        return ["  " + Self.subtle("legend:", useColor: useColor, enhanced: enhanced) + " "
+            + entries.joined(separator: "  ")]
+    }
+
+    /// Provider name in its palette color (bold), so legend and breakdown match the bars.
+    static func providerName(
+        _ name: String,
+        provider: UsageProvider,
+        palette: [UsageProvider: (r: Int, g: Int, b: Int)],
+        useColor: Bool,
+        enhanced: Bool) -> String
+    {
+        guard useColor else { return name }
+        _ = enhanced
+        let rgb = palette[provider] ?? Self.providerFallbackRGB
+        return "\u{001B}[1m" + CLIRenderer.ansiTrueColor(red: rgb.r, green: rgb.g, blue: rgb.b, name)
     }
 
     /// `n`-row table breaking down each provider's window totals into per-provider and
@@ -716,15 +850,17 @@ enum CLIWatchTrendRenderer {
     /// table, never one section per provider.
     static func modelBreakdownTable(
         totals: [CostUsageStackedProviderTotals],
+        palette: [UsageProvider: (r: Int, g: Int, b: Int)] = [:],
         useColor: Bool,
         enhanced: Bool) -> [String]
     {
         guard !totals.isEmpty else { return [] }
-        var lines: [String] = ["", Self.subtle("  breakdown:", useColor: useColor, enhanced: enhanced)]
+        var lines: [String] = [Self.subtle("  breakdown:", useColor: useColor, enhanced: enhanced)]
         for providerTotals in totals {
             let name = ProviderDescriptorRegistry.descriptor(for: providerTotals.provider).metadata.displayName
             lines.append("  " + Self.providerSummaryLine(
-                name: name, totals: providerTotals, useColor: useColor, enhanced: enhanced))
+                name: name, totals: providerTotals, palette: palette,
+                useColor: useColor, enhanced: enhanced))
             for model in providerTotals.models where model.totalTokens > 0 || model.costUSD > 0 {
                 lines.append("    " + Self.modelLine(name: model.modelName, model: model,
                                                     useColor: useColor, enhanced: enhanced))
@@ -733,41 +869,50 @@ enum CLIWatchTrendRenderer {
         return lines
     }
 
-    /// Per-provider header row: tokens / in / out / cache-hit / cache-write / cost / reqs.
+    /// Per-provider header row: name in its bar color, metrics subtle, cost in gold —
+    /// mirroring the card header (colored name) + plan value (gold) treatment.
     static func providerSummaryLine(
         name: String,
         totals: CostUsageStackedProviderTotals,
+        palette: [UsageProvider: (r: Int, g: Int, b: Int)] = [:],
         useColor: Bool,
         enhanced: Bool) -> String
     {
-        let label = useColor && enhanced ? CLIRenderer.colorizeEnhancedAccentBold(name) : name
-        let parts = [
-            "\(label)",
+        let label = Self.providerName(
+            name, provider: totals.provider, palette: palette, useColor: useColor, enhanced: enhanced)
+        let metrics = [
             "tok \(UsageFormatter.tokenCountString(totals.totalTokens))",
             "in \(UsageFormatter.tokenCountString(totals.inputTokens))",
             "out \(UsageFormatter.tokenCountString(totals.outputTokens))",
             "hit \(UsageFormatter.tokenCountString(totals.cacheReadTokens))",
             "wr \(UsageFormatter.tokenCountString(totals.cacheCreationTokens))",
-            "$\(String(format: "%.2f", totals.costUSD))",
-            totals.requestCount > 0 ? "\(totals.requestCount) req" : "",
-        ].filter { !$0.isEmpty }
-        return Self.subtle(parts.joined(separator: " · "), useColor: useColor, enhanced: enhanced)
+        ].joined(separator: " · ")
+        let cost = "$\(String(format: "%.2f", totals.costUSD))"
+        var line = label + Self.subtle(" · " + metrics + " · ", useColor: useColor, enhanced: enhanced)
+            + Self.gold(cost, useColor: useColor, enhanced: enhanced)
+        if totals.requestCount > 0 {
+            line += Self.subtle(" · \(totals.requestCount) req", useColor: useColor, enhanced: enhanced)
+        }
+        return line
     }
 
-    /// Per-model row: model name · tokens · cost (only fields ModelBreakdown exposes).
+    /// Per-model row: model name slightly brighter than the metrics so rows scan easily.
     static func modelLine(
         name: String,
         model: CostUsageModelBreakdownTotals,
         useColor: Bool,
         enhanced: Bool) -> String
     {
+        let modelName = Self.displayName(forModel: name)
+        let label = useColor && enhanced
+            ? CLIRenderer.colorizeEnhancedReadableMuted(modelName)
+            : modelName
         let parts = [
-            Self.displayName(forModel: name),
             "\(UsageFormatter.tokenCountString(model.totalTokens)) tok",
             "$\(String(format: "%.2f", model.costUSD))",
             model.requestCount > 0 ? "\(model.requestCount) req" : "",
         ].filter { !$0.isEmpty }
-        return Self.subtle(parts.joined(separator: " · "), useColor: useColor, enhanced: enhanced)
+        return label + Self.subtle(" · " + parts.joined(separator: " · "), useColor: useColor, enhanced: enhanced)
     }
 
     /// Fork: display-only model-name normalization for the watch breakdown table. Maps the
@@ -808,8 +953,10 @@ enum CLIWatchTrendRenderer {
         var line = "  "
         for (index, label) in labels.enumerated() {
             let centered = Self.center(label, glyphWidth: label.count, columnWidth: columnWidth)
-            if useColor, index < highlight.count, highlight[index], enhanced {
-                line += CLIRenderer.colorizeEnhancedAccentBold(centered)
+            if useColor, index < highlight.count, highlight[index] {
+                line += enhanced
+                    ? CLIRenderer.colorizeEnhancedAccentBold(centered)
+                    : CLIRenderer.colorizeAccentBold(centered)
             } else {
                 line += centered
             }

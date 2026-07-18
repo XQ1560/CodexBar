@@ -297,8 +297,8 @@ extension CodexBarCLI {
         let grid = CostUsageTrendBuckets.weekGridSlots(
             entries: combined, weeks: Self.watchHeatmapWeeks, endingAt: Date())
         return CLIWatchTrendRenderer.renderHeatmap(
-            title: "\(names) · usage heatmap", grid: grid, width: cols,
-            useColor: useColor, enhanced: enhanced)
+            title: "Usage Heatmap", badge: "heatmap", providersLabel: names,
+            grid: grid, width: cols, useColor: useColor, enhanced: enhanced)
     }
 
     /// Fork: one combined trend chart across every provider that has token history in the
@@ -333,7 +333,7 @@ extension CodexBarCLI {
             let slots = CostUsageStackedBuckets.naturalWeekSlots(
                 perProvider: perProvider, providers: activeProviders, containing: Date())
             return CLIWatchTrendRenderer.renderWeek(
-                title: "this week", slots: slots, totals: totals,
+                title: "This Week", badge: "week", slots: slots, totals: totals,
                 height: barHeight, width: cols, useColor: useColor, enhanced: enhanced)
         case .thirtyDays:
             // Fork: month view day count is configurable via --month (default 15). Wider
@@ -342,8 +342,8 @@ extension CodexBarCLI {
             let slots = CostUsageStackedBuckets.trailingDaySlots(
                 perProvider: perProvider, providers: activeProviders, days: monthDays, endingAt: Date())
             return CLIWatchTrendRenderer.renderThirtyDays(
-                title: "last \(monthDays) days", slots: slots, totals: totals, width: cols,
-                height: barHeight, useColor: useColor, enhanced: enhanced)
+                title: "Last \(monthDays) Days", badge: "\(monthDays)d", slots: slots, totals: totals,
+                width: cols, height: barHeight, useColor: useColor, enhanced: enhanced)
         default:
             return []
         }
