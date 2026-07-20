@@ -87,7 +87,11 @@ public enum ClaudeProviderDescriptor {
 
     private static func makePlanningInput(context: ProviderFetchContext) -> ClaudeSourcePlanningInput {
         let webExtrasEnabled = context.settings?.claude?.webExtrasEnabled ?? false
-        let needsOAuthAvailability = context.runtime == .app && context.sourceMode == .auto
+        // Fork: also compute OAuth availability on CLI runtime so ClaudeSourcePlanner can
+        // prefer it when the CLI PTY fallback is unreliable. Upstream gated this on
+        // `runtime == .app`, which forced the CLI auto pipeline to [web, cli] even when
+        // valid OAuth credentials were available.
+        let needsOAuthAvailability = context.sourceMode == .auto
         let hasWebSession = Self.hasPlausibleWebSession(context: context)
 
         return ClaudeSourcePlanningInput(

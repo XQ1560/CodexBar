@@ -42,6 +42,28 @@ struct ClaudeSourcePlannerTests {
     }
 
     @Test
+    func `CLI auto plan prefers OAuth when credentials are available`() {
+        // Fork: when OAuth credentials are available, CLI auto prefers OAuth over the
+        // brittle CLI PTY fallback (some Claude Code 2.1.x output shapes fail to parse).
+        let plan = ClaudeSourcePlanner.resolve(input: ClaudeSourcePlanningInput(
+            runtime: .cli,
+            selectedDataSource: .auto,
+            webExtrasEnabled: false,
+            hasWebSession: true,
+            hasCLI: true,
+            hasOAuthCredentials: true))
+
+        #expect(plan.orderedSteps.map(\.dataSource) == [.oauth, .web, .cli])
+        #expect(plan.orderedSteps.map(\.inclusionReason) == [
+            .cliAutoPreferredOAuth,
+            .cliAutoPreferredWeb,
+            .cliAutoFallbackCLI,
+        ])
+        #expect(plan.availableSteps.map(\.dataSource) == [.oauth, .web, .cli])
+        #expect(plan.preferredStep?.dataSource == .oauth)
+    }
+
+    @Test
     func `explicit mode plan is single step`() {
         let plan = ClaudeSourcePlanner.resolve(input: ClaudeSourcePlanningInput(
             runtime: .app,

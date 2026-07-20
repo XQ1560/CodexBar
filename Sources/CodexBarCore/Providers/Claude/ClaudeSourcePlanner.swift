@@ -30,6 +30,7 @@ public enum ClaudeSourcePlanReason: String, Equatable, Sendable {
     case appAutoPreferredOAuth = "app-auto-preferred-oauth"
     case appAutoFallbackCLI = "app-auto-fallback-cli"
     case appAutoFallbackWeb = "app-auto-fallback-web"
+    case cliAutoPreferredOAuth = "cli-auto-preferred-oauth"
     case cliAutoPreferredWeb = "cli-auto-preferred-web"
     case cliAutoFallbackCLI = "cli-auto-fallback-cli"
 }
@@ -179,10 +180,23 @@ public enum ClaudeSourcePlanner {
                     self.step(.web, reason: .appAutoFallbackWeb, input: input),
                 ]
             case .cli:
-                [
-                    self.step(.web, reason: .cliAutoPreferredWeb, input: input),
-                    self.step(.cli, reason: .cliAutoFallbackCLI, input: input),
-                ]
+                // Fork: prefer OAuth when credentials are available. The upstream CLI auto
+                // pipeline was [web, cli] only, but `claude /usage` PTY parsing is brittle
+                // (some Claude Code 2.1.x output shapes yield "Missing Current session").
+                // When OAuth credentials are present and valid, prefer it; otherwise keep
+                // the original order so machines without OAuth are unaffected.
+                if input.hasOAuthCredentials {
+                    [
+                        self.step(.oauth, reason: .cliAutoPreferredOAuth, input: input),
+                        self.step(.web, reason: .cliAutoPreferredWeb, input: input),
+                        self.step(.cli, reason: .cliAutoFallbackCLI, input: input),
+                    ]
+                } else {
+                    [
+                        self.step(.web, reason: .cliAutoPreferredWeb, input: input),
+                        self.step(.cli, reason: .cliAutoFallbackCLI, input: input),
+                    ]
+                }
             }
         case .api:
             [self.step(.api, reason: .explicitSourceSelection, input: input)]
