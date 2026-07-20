@@ -2594,6 +2594,21 @@ public enum ClaudeOAuthCredentialsStore {
     #endif
 
     private static func defaultCredentialsURL() -> URL {
+        // Fork: honor CLAUDE_CONFIG_DIR (already honored by the cost-usage scanner and the
+        // token-cost source detector). Lets Linux/WSL reuse Claude Code CLI's credentials
+        // when the home directory is not where the CLI wrote them (e.g. Windows client data
+        // mounted under /mnt/c/Users/<user>). Comma-separated multi-root is accepted to stay
+        // consistent with the cost-usage scanner; the first entry wins (OAuth is single-account).
+        if let raw = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty
+        {
+            for part in raw.split(separator: ",") {
+                let path = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !path.isEmpty else { continue }
+                return URL(fileURLWithPath: path).appendingPathComponent(".credentials.json")
+            }
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(self.credentialsPath)
     }

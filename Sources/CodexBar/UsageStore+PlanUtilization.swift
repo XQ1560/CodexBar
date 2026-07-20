@@ -1661,12 +1661,26 @@ private enum ClaudeActiveAccountProbe {
             return uuid
         }
         #endif
-        // `~/.claude.json` is a SIBLING of `.claude/`, not inside it. Home resolution mirrors
-        // `ClaudeOAuthCredentials.defaultCredentialsURL()`. This intentionally does NOT honor
-        // CLAUDE_CONFIG_DIR: the credential store that yields `historyOwnerIdentifier` is purely
-        // home-relative, so the accountUuid corroboration must resolve against the same home or the
-        // two signals would point at different accounts.
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+        // `~/.claude.json` is a SIBLING of `.claude/`, not inside it. Resolution mirrors
+        // `ClaudeOAuthCredentials.defaultCredentialsURL()`: when CLAUDE_CONFIG_DIR is set, both
+        // the credentials file and this accountUuid source must resolve from the same root or
+        // the two signals could point at different accounts. `.claude.json` lives one level
+        // above CLAUDE_CONFIG_DIR (which points at the `.claude/` directory itself); in the
+        // home-relative fallback, `.claude.json` is a direct child of the home directory.
+        let configDirURL: URL = {
+            if let raw = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !raw.isEmpty
+            {
+                for part in raw.split(separator: ",") {
+                    let path = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !path.isEmpty else { continue }
+                    return URL(fileURLWithPath: path)
+                }
+            }
+            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        }()
+        let url = configDirURL.deletingLastPathComponent().appendingPathComponent(".claude.json")
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(ClaudeConfigAccount.self, from: data),
               let uuid = decoded.oauthAccount?.accountUuid?.trimmingCharacters(in: .whitespacesAndNewlines),
