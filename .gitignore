@@ -40,6 +40,9 @@ __pycache__/
 # Local agent working files (ZCode plans, scratch, etc.)
 .zcode/
 
+# Local-only Windows WSL bootstrap helper (not part of the fork)
+Scripts/install-wsl-ubuntu2404.ps1
+
 # Debug/analysis docs
 docs/*-analysis.md
 docs/.viewport-audit/
