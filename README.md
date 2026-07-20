@@ -48,7 +48,11 @@ bash /mnt/e/CodexBar/Scripts/wsl/install-swift.sh
 
 > **代理**：脚本会探测 WSL 宿主代理 `http://<宿主IP>:7897`（可用 `CODEXBAR_PROXY_PORT` 覆盖），**只在端口对 WSL 子网开放时才启用，否则自动直连并打印警告**。默认 NAT WSL2 下若 Windows 代理只监听 `127.0.0.1`，请在代理客户端开启 "Allow LAN / 允许局域网连接"，或显式 `export HTTPS_PROXY=...`。
 >
-> **libncurses**：Ubuntu 24.04 默认只有 wide 版 `libncursesw.so.6`，而 Swift 链接 narrow 版 `libncurses.so.6`。`install-swift.sh` 会在 `~/swift/shims/` 自动建软链，`deploy.sh` 会自动把该目录加到 `LD_LIBRARY_PATH`；手动调用 swift 时按脚本提示自行 `export LD_LIBRARY_PATH="$HOME/swift/shims:$LD_LIBRARY_PATH"`。
+> **libncurses**：Ubuntu 24.04 默认只有 wide 版 `libncursesw.so.6`，而 Swift 链接 narrow 版 `libncurses.so.6`。`install-swift.sh` 会在 `~/swift/shims/` 自动建软链，`deploy.sh` 会自动把该目录加到 `LD_LIBRARY_PATH`；手动调用 swift（如 `swift build` / `swift test`）时，请把下面这行加到 `~/.bashrc` 持久生效：
+>
+> ```bash
+> export LD_LIBRARY_PATH="$HOME/swift/shims:${LD_LIBRARY_PATH:-}"
+> ```
 
 每次改完代码后构建 + 部署（源码会先 rsync 到 WSL 原生文件系统再编译，避免 drvfs 拖慢构建）：
 
@@ -59,6 +63,19 @@ bash /mnt/e/CodexBar/Scripts/wsl/deploy.sh          # 默认部署到 /mnt/d/Cod
 脚本会把产物装到 `app/v<版本>-fork/` 并自动把 `bin/codexbar` 指向新版本。
 
 > **不要用管道包裹 deploy.sh**（如 `bash deploy.sh 2>&1 | tail`）：管道会让子 shell 的 `set -e` 失效并吞掉 swift build 的真实退出码，导致"看着成功"的部署实际没装上。直接 `bash deploy.sh`，需要保存日志请用 `bash deploy.sh > deploy.log 2>&1`。
+
+### 首次配置 provider
+
+部署完成后，launcher 默认只启用 Codex（OAuth，无需 API key），其它 provider 全部禁用。首次使用时按需启用：
+
+```bash
+codexbar config providers                          # 列出全部 provider 及开关状态
+codexbar config enable --provider claude           # 启用 Claude（OAuth，自动登录）
+codexbar config enable --provider gemini           # 启用 Gemini
+printf '%s' "$GROK_API_KEY" | codexbar config set-api-key --provider grok --stdin   # API-key 类 provider
+```
+
+配置写入 `${CODEXBAR_CONFIG}` （即 `D:\CodexBar\config\config.json`）；首次启用任意 provider 后该文件才会创建。各 provider 的鉴权方式见下文 [Providers](#providers) 章节。
 
 ### 终端看板（codexbar cards --watch）
 

@@ -37,6 +37,9 @@ debug_*.swift
 .tmp-clang/
 __pycache__/
 
+# Local agent working files (ZCode plans, scratch, etc.)
+.zcode/
+
 # Debug/analysis docs
 docs/*-analysis.md
 docs/.viewport-audit/
