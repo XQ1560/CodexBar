@@ -82,12 +82,19 @@ if [[ -z "${HTTPS_PROXY:-}" && -z "${https_proxy:-}" ]]; then
     readonly WINDOWS_HOST="$(ip -4 route show default | awk 'NR == 1 { print $3 }')"
     if [[ -n "${WINDOWS_HOST}" ]]; then
         readonly CODEXBAR_PROXY_PORT="${CODEXBAR_PROXY_PORT:-7897}"
-        export HTTP_PROXY="http://${WINDOWS_HOST}:${CODEXBAR_PROXY_PORT}"
-        export HTTPS_PROXY="${HTTP_PROXY}"
-        export http_proxy="${HTTP_PROXY}"
-        export https_proxy="${HTTPS_PROXY}"
-        export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1,::1}"
-        export no_proxy="${NO_PROXY}"
+        # Probe before injecting: under default NAT WSL2 a Windows proxy bound
+        # to 127.0.0.1 is unreachable from the guest, and provider HTTP calls
+        # would silently hang on connect. Go direct if the port refuses.
+        if timeout 1 bash -c "</dev/tcp/${WINDOWS_HOST}/${CODEXBAR_PROXY_PORT}" 2>/dev/null; then
+            export HTTP_PROXY="http://${WINDOWS_HOST}:${CODEXBAR_PROXY_PORT}"
+            export HTTPS_PROXY="${HTTP_PROXY}"
+            export http_proxy="${HTTP_PROXY}"
+            export https_proxy="${HTTPS_PROXY}"
+            export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1,::1}"
+            export no_proxy="${NO_PROXY}"
+        else
+            echo "codexbar: host proxy ${WINDOWS_HOST}:${CODEXBAR_PROXY_PORT} not reachable from WSL; going direct (export HTTPS_PROXY to force, or open 'Allow LAN' in the proxy client)" >&2
+        fi
     fi
 fi
 
