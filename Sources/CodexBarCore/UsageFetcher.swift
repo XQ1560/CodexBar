@@ -1,6 +1,8 @@
 import Foundation
 
 public struct RateWindow: Codable, Equatable, Sendable {
+    /// Provider usage value, intentionally not normalized globally. Pace and provider-specific diagnostics may
+    /// preserve raw over-quota values; display-only projections should use `UsagePercent.displayClamped`.
     public let usedPercent: Double
     public let windowMinutes: Int?
     public let resetsAt: Date?
@@ -192,6 +194,7 @@ public struct UsageSnapshot: Codable, Sendable {
     public let deepseekUsage: DeepSeekUsageSummary?
     public let deepseekDetailedUsageState: DeepSeekDetailedUsageState
     public let deepseekPlatformProfiles: [DeepSeekPlatformProfile]
+    public let opencodegoUsage: OpenCodeGoUsageSnapshot?
     public let mimoUsage: MiMoUsageSnapshot?
     public let openRouterUsage: OpenRouterUsageSnapshot?
     public let sakanaPayAsYouGo: SakanaPayAsYouGoSnapshot?
@@ -262,6 +265,7 @@ public struct UsageSnapshot: Codable, Sendable {
         deepseekUsage: DeepSeekUsageSummary? = nil,
         deepseekDetailedUsageState: DeepSeekDetailedUsageState = .notRequested,
         deepseekPlatformProfiles: [DeepSeekPlatformProfile] = [],
+        opencodegoUsage: OpenCodeGoUsageSnapshot? = nil,
         mimoUsage: MiMoUsageSnapshot? = nil,
         openRouterUsage: OpenRouterUsageSnapshot? = nil,
         sakanaPayAsYouGo: SakanaPayAsYouGoSnapshot? = nil,
@@ -297,6 +301,7 @@ public struct UsageSnapshot: Codable, Sendable {
         self.deepseekUsage = deepseekUsage
         self.deepseekDetailedUsageState = deepseekDetailedUsageState
         self.deepseekPlatformProfiles = deepseekPlatformProfiles
+        self.opencodegoUsage = opencodegoUsage
         self.mimoUsage = mimoUsage
         self.openRouterUsage = openRouterUsage
         self.sakanaPayAsYouGo = sakanaPayAsYouGo
@@ -349,6 +354,7 @@ public struct UsageSnapshot: Codable, Sendable {
         self.deepseekUsage = nil // Not persisted, fetched fresh each time
         self.deepseekDetailedUsageState = .notRequested // Live-only fetch state
         self.deepseekPlatformProfiles = [] // Live-only browser profile catalog
+        self.opencodegoUsage = nil // Not persisted, fetched fresh each time
         self.mimoUsage = try container.decodeIfPresent(MiMoUsageSnapshot.self, forKey: .mimoUsage)
         self.openRouterUsage = try container.decodeIfPresent(OpenRouterUsageSnapshot.self, forKey: .openRouterUsage)
         self.sakanaPayAsYouGo = try container.decodeIfPresent(
@@ -463,6 +469,13 @@ public struct UsageSnapshot: Codable, Sendable {
     }
 
     public func switcherWeeklyWindow(for provider: UsageProvider, showUsed: Bool) -> RateWindow? {
+        // This surface is labelled "Weekly progress", so prefer a real 7-day lane when one is
+        // available. Some providers publish model-specific weekly lanes in extraRateWindows.
+        if let weekly = self.mostConstrainedSwitcherWeeklyWindow() {
+            return weekly
+        }
+
+        // Keep the existing provider-specific fallback for providers without a weekly allowance.
         switch provider {
         case .factory:
             // Factory prefers secondary window
@@ -490,6 +503,16 @@ public struct UsageSnapshot: Codable, Sendable {
         default:
             return self.primary ?? self.secondary
         }
+    }
+
+    private func mostConstrainedSwitcherWeeklyWindow() -> RateWindow? {
+        let standardWindows = [self.primary, self.secondary, self.tertiary].compactMap(\.self)
+        let namedWindows = self.extraRateWindows?
+            .filter(\.usageKnown)
+            .map(\.window) ?? []
+        return (standardWindows + namedWindows)
+            .filter { $0.windowMinutes == 7 * 24 * 60 }
+            .max { $0.usedPercent < $1.usedPercent }
     }
 
     public func accountEmail(for provider: UsageProvider) -> String? {
@@ -616,6 +639,7 @@ public struct UsageSnapshot: Codable, Sendable {
             deepseekUsage: deepseekUsage.resolving(self.deepseekUsage),
             deepseekDetailedUsageState: deepseekDetailedUsageState.resolving(self.deepseekDetailedUsageState),
             deepseekPlatformProfiles: deepseekPlatformProfiles.resolving(self.deepseekPlatformProfiles),
+            opencodegoUsage: self.opencodegoUsage,
             mimoUsage: self.mimoUsage,
             openRouterUsage: self.openRouterUsage,
             sakanaPayAsYouGo: self.sakanaPayAsYouGo,
